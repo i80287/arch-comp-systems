@@ -1,5 +1,9 @@
 *.mp4
+
 *.zip
-*.exe
+*.7z
+
 *.cpp
+*.exe
+
 *.vscode
