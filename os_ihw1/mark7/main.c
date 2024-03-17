@@ -44,7 +44,9 @@ static void reverse_substring(char* string, size_t l, size_t r) {
     }
 }
 
-static bool create_file_reader_impl(int read_file_fd, int reader_to_proc_fd) {
+static bool create_file_reader_writer_impl(int read_file_fd, int reader_to_proc_fd,
+                                           int write_file_fd,
+                                           int processor_to_writer_fd) {
     if (read_file_fd < 0) {
         print_failure_message("File reader child: can't open input file");
         return false;
@@ -52,6 +54,15 @@ static bool create_file_reader_impl(int read_file_fd, int reader_to_proc_fd) {
     if (reader_to_proc_fd < 0) {
         print_failure_message(
             "File reader child: can't open fifo [file reader] -> [text processor]");
+        return false;
+    }
+    if (write_file_fd < 0) {
+        print_failure_message("File writer child: can't open output file");
+        return false;
+    }
+    if (processor_to_writer_fd < 0) {
+        print_failure_message(
+            "File writer child: can't open fifo [text processor] -> [file writer]");
         return false;
     }
 
@@ -69,18 +80,35 @@ static bool create_file_reader_impl(int read_file_fd, int reader_to_proc_fd) {
         return false;
     }
 
+    nbytes_read = read(processor_to_writer_fd, read_buffer, BUFFER_SIZE - 1);
+    if (nbytes_read < 0) {
+        print_failure_message(
+            "File writer child: can't read from the fifo [text processor] -> [file "
+            "writer]");
+        return false;
+    }
+
+    if (write(write_file_fd, read_buffer, (size_t)nbytes_read) < 0) {
+        print_failure_message("File writer child: can't write to output file");
+        return false;
+    }
+
     return true;
 }
 
-static pid_t create_file_reader(const char* input_filename) {
+static pid_t create_file_reader_writer(const char* input_filename,
+                                       const char* output_filename) {
     pid_t child_pid = fork();
     if (child_pid != 0) {
         return child_pid;
     }
 
-    int read_file_fd      = open(input_filename, O_RDONLY);
-    int reader_to_proc_fd = open(READER_TO_PROC_FIFO, O_WRONLY);
-    bool result           = create_file_reader_impl(read_file_fd, reader_to_proc_fd);
+    int read_file_fd           = open(input_filename, O_RDONLY);
+    int reader_to_proc_fd      = open(READER_TO_PROC_FIFO, O_WRONLY);
+    int write_file_fd          = open(output_filename, O_WRONLY | O_CREAT, 0644);
+    int processor_to_writer_fd = open(PROC_TO_WRITER_FIFO, O_RDONLY);
+    bool result = create_file_reader_writer_impl(read_file_fd, reader_to_proc_fd,
+                                                 write_file_fd, processor_to_writer_fd);
     if (read_file_fd >= 0) {
         if (close(read_file_fd) < 0) {
             print_failure_message("File reader child: can't close opened input file");
@@ -93,6 +121,20 @@ static pid_t create_file_reader(const char* input_filename) {
                 "File reader child: can't close writing side of the fifo [file reader] "
                 "-> "
                 "[text processor]");
+            result = false;
+        }
+    }
+    if (write_file_fd >= 0) {
+        if (close(write_file_fd) < 0) {
+            print_failure_message("File writer child: can't close opened output file");
+            result = false;
+        }
+    }
+    if (processor_to_writer_fd >= 0) {
+        if (close(processor_to_writer_fd) < 0) {
+            print_failure_message(
+                "File writer child: can't close opened fifo [text processor] -> [file "
+                "writer]");
             result = false;
         }
     }
@@ -180,71 +222,17 @@ static pid_t create_data_processor(uint32_t start_n, uint32_t end_n) {
     exit(result ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 
-static bool create_file_writer_impl(int write_file_fd, int processor_to_writer_fd) {
-    if (write_file_fd < 0) {
-        print_failure_message("File writer child: can't open output file");
-        return false;
-    }
-    if (processor_to_writer_fd < 0) {
-        print_failure_message(
-            "File writer child: can't open fifo [text processor] -> [file writer]");
-        return false;
-    }
-
-    char read_buffer[BUFFER_SIZE];
-    ssize_t nbytes_read = read(processor_to_writer_fd, read_buffer, BUFFER_SIZE - 1);
-    if (nbytes_read < 0) {
-        print_failure_message(
-            "File writer child: can't read from the fifo [text processor] -> [file "
-            "writer]");
-        return false;
-    }
-
-    if (write(write_file_fd, read_buffer, (size_t)nbytes_read) < 0) {
-        print_failure_message("File writer child: can't write to output file");
-        return false;
-    }
-
-    return true;
-}
-
-static pid_t create_file_writer(const char* output_filename) {
-    pid_t child_pid = fork();
-    if (child_pid != 0) {
-        return child_pid;
-    }
-
-    int write_file_fd          = open(output_filename, O_WRONLY | O_CREAT, 0644);
-    int processor_to_writer_fd = open(PROC_TO_WRITER_FIFO, O_RDONLY);
-    bool result = create_file_writer_impl(write_file_fd, processor_to_writer_fd);
-    if (write_file_fd >= 0) {
-        if (close(write_file_fd) < 0) {
-            print_failure_message("File writer child: can't close opened output file");
-            result = false;
-        }
-    }
-    if (processor_to_writer_fd >= 0) {
-        if (close(processor_to_writer_fd) < 0) {
-            print_failure_message(
-                "File writer child: can't close opened fifo [processor] -> [file "
-                "writer]");
-            result = false;
-        }
-    }
-
-    exit(result ? EXIT_SUCCESS : EXIT_FAILURE);
-}
-
 static bool run(parse_result_t parse_result) {
     umask(0);
     mknod(READER_TO_PROC_FIFO, S_IFIFO | 0666, 0);
     umask(0);
     mknod(PROC_TO_WRITER_FIFO, S_IFIFO | 0666, 0);
 
-    pid_t file_reader_pid = create_file_reader(parse_result.input_filename);
+    pid_t file_reader_pid = create_file_reader_writer(parse_result.input_filename,
+                                                      parse_result.output_filename);
     if (file_reader_pid == -1) {
         print_failure_message(
-            "Main process: Can't create child process for reading file");
+            "Main process: Can't create child process for reading and writing file");
         return false;
     }
 
@@ -256,23 +244,12 @@ static bool run(parse_result_t parse_result) {
         return false;
     }
 
-    pid_t file_writer_pid = create_file_writer(parse_result.output_filename);
-    if (file_writer_pid == -1) {
-        print_failure_message(
-            "Main process: Can't create child process for writing file");
-        return false;
-    }
-
     int status;
     waitpid(file_reader_pid, &status, 0);
     if (status != EXIT_SUCCESS) {
         return false;
     }
     waitpid(data_processor_pid, &status, 0);
-    if (status != EXIT_SUCCESS) {
-        return false;
-    }
-    waitpid(file_writer_pid, &status, 0);
     if (status != EXIT_SUCCESS) {
         return false;
     }
