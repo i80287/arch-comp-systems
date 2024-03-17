@@ -118,7 +118,7 @@ static bool run(const char* input_filename, const char* output_filename) {
 int main(int argc, const char* const argv[]) {
     if (argc != 3) {
         fputs(
-            "[>>>] Error        : expeted 2 arguments"
+            "[>>>] Error        : expeted 2 arguments\n"
             "[>>>] Usage hint   : executable input-file-name output-file-name\n"
             "[>>>] Usage example: main.out in.txt out.txt\n",
             stderr);
