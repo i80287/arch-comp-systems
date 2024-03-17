@@ -237,15 +237,9 @@ static pid_t create_file_writer(const char* output_filename) {
 
 static bool run(parse_result_t parse_result) {
     umask(0);
-    if (mknod(READER_TO_PROC_FIFO, S_IFIFO | 0666, 0) < 0) {
-        perror("mknod");
-        return false;
-    }
+    mknod(READER_TO_PROC_FIFO, S_IFIFO | 0666, 0);
     umask(0);
-    if (mknod(PROC_TO_WRITER_FIFO, S_IFIFO | 0666, 0) < 0) {
-        perror("mknod");
-        return false;
-    }
+    mknod(PROC_TO_WRITER_FIFO, S_IFIFO | 0666, 0);
 
     pid_t file_reader_pid = create_file_reader(parse_result.input_filename);
     if (file_reader_pid == -1) {
