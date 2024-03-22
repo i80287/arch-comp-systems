@@ -13,8 +13,7 @@ enum message_type {
     READY_TO_REMOVE_SEGMENT,
     SERVER_SENT_PROCESS_ID,
     CLIENT_SENT_PROCESS_ID,
-    SERVER_GOT_PROCESS_ID,
-    CLIENT_READY,
+    SERVER_GOT_PROCESS_ID
 };
 
 typedef struct {

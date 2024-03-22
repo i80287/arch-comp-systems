@@ -1,3 +1,8 @@
+// Defined to define _POSIX_C_SOURCE 200809L to enable kill() function
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+
 #include <inttypes.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -30,14 +35,6 @@ static void exchange_process_ids_with_client(message_t* message_ptr) {
 
     printf("[server] [>>>] got process id %d of the client\n", client_id);
     message_ptr->type = SERVER_GOT_PROCESS_ID;
-
-    while (is_running && message_ptr->type != CLIENT_READY) {
-        sleep_nanos(DEFAULT_SLEEP_SPINLOCK_INTERVAL);
-    }
-    message_ptr->type = EMPTY_MESSAGE;
-    printf(
-        "[server] [>>>] client send message that is is ready to start generating "
-        "numbers\n");
 }
 
 static void setup_signal_handlers() {
