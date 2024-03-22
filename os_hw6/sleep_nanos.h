@@ -4,6 +4,8 @@
 #define _XOPEN_SOURCE 700
 #include <time.h>
 
+static const long DEFAULT_SLEEP_SPINLOCK_INTERVAL = 20000;
+
 static int sleep_nanos(long nanoseconds) {
     const struct timespec sleep_time = {
         .tv_sec  = 0,

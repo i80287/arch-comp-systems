@@ -1,12 +1,25 @@
 #pragma once
 
 #include <stdatomic.h>
+#include <stdbool.h>
 
-enum message_type { EMPTY_MESSAGE = 0, NEW_NUMBER, SERVER_SHUTDOWN_SIGNAL, CLIENT_SHUTDOWN_SIGNAL, READY_TO_REMOVE_SEGMENT };
+enum { TERMINATE_USING_SIGNAL = true };
+
+enum message_type {
+    EMPTY_MESSAGE = 0,
+    NEW_NUMBER,
+    SERVER_SHUTDOWN,
+    CLIENT_SHUTDOWN,
+    READY_TO_REMOVE_SEGMENT,
+    SERVER_SENT_PROCESS_ID,
+    CLIENT_SENT_PROCESS_ID,
+    SERVER_GOT_PROCESS_ID,
+    CLIENT_READY,
+};
 
 typedef struct {
     volatile _Atomic enum message_type type;
-    uint64_t rand_num;
+    int64_t rand_num;
 } message_t;
 
 enum {
