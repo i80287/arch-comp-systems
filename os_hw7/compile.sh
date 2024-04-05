@@ -1,2 +1,4 @@
-gcc -Wall -Wextra writer.c common.c -o writer
-gcc -Wall -Wextra reader.c common.c -o reader
+#! /bin/sh
+
+gcc writer.c common.c -o writer -lpthread -lrt -o writer
+gcc reader.c common.c -o reader -lpthread -lrt -o reader
