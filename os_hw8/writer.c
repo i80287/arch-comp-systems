@@ -73,7 +73,7 @@ int main() {
         printf("Object is open: name = %s, id = 0x%x\n", shar_object,
                buf_id);
     }
-    // Задание размера объекта памяти
+    // Задание размfflush(stdout);ера объекта памяти
     if (ftruncate(buf_id, sizeof(shared_memory)) == -1) {
         perror("ftruncate");
         exit(-1);
@@ -88,6 +88,7 @@ int main() {
         exit(-1);
     }
     printf("mmap checkout\n");
+    fflush(stdout);
 
     // Разборки писателей. Семафор для конкуренции за работу
     if ((writer = sem_open(writer_sem_name, O_CREAT, 0666, 1)) == 0) {
@@ -142,6 +143,7 @@ int main() {
     // сохранение pid для корректного взаимодействия с писателем
     buffer->writer_pid = getpid();
     printf("Writer %d: I am first for this work! :)\n", getpid());
+    fflush(stdout);
 
     // Инициализация буфера отрицательными числам, имитирующими пустые
     // ячейки Перед доступом читателя, который обрабатывает натуральные

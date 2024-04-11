@@ -58,11 +58,13 @@ int main() {
 
     // Если читатель запустился раньше, он ждет разрешения от
     // администратора, Который находится в писателе
+    printf("Consumer %d started waiting for the producer\n", getpid());
     if (sem_wait(admin) == -1) {  // ожидание когда запустится писатель
         perror("sem_wait: Incorrect wait of admin semaphore");
         exit(-1);
     };
     printf("Consumer %d started\n", getpid());
+    fflush(stdout);
     // После этого он вновь поднимает семафор, позволяющий запустить других
     // читателей
     if (sem_post(admin) == -1) {
@@ -78,6 +80,7 @@ int main() {
     } else {
         printf("Memory object is opened: name = %s, id = 0x%x\n",
                shar_object, buf_id);
+        fflush(stdout);
     }
     // Задание размера объекта памяти
     if (ftruncate(buf_id, sizeof(shared_memory)) == -1) {
@@ -85,6 +88,7 @@ int main() {
         exit(-1);
     } else {
         printf("Memory size set and = %lu\n", sizeof(shared_memory));
+        fflush(stdout);
     }
 
     // получить доступ к памяти
@@ -164,6 +168,7 @@ int main() {
             "Consumer %d: Reads value = %d from cell [%zu], factorial = "
             "%d\n",
             pid, result, read_index, f);
+        fflush(stdout);
         // Выход из критической секции
         if (sem_post(read_mutex) == -1) {
             perror("sem_post: Incorrect post of mutex semaphore");
