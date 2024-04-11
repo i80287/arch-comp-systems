@@ -4,6 +4,7 @@
 *.7z
 
 *.exe
+*.out
 
 *.vscode
 **/build
