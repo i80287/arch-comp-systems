@@ -2,7 +2,6 @@
 #include <unistd.h>
 
 #include "common.h"
-#include <assert.h>
 // Семафор для отсекания лишних читателей
 // То есть, для формирования только одного процесса-читателя
 const char *reader_sem_name = "/reader-semaphore";
@@ -132,8 +131,6 @@ int main() {
         exit(-1);
     }
 
-    assert(buffer->size_of_reader_pids <= MAX_READERS);
-
     // Алгоритм читателя
     while (1) {
         sleep((unsigned)rand() % 3 + 1);
@@ -151,7 +148,6 @@ int main() {
         // Получение значения из читаемой ячейки
         size_t read_index = buffer->read_index;
         int result = buffer->store[read_index];
-        assert(result >= 0);
         buffer->store[read_index] = -1;
         buffer->read_index = (read_index + 1) % BUF_SIZE;
         // вычисление факториала

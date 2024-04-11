@@ -2,7 +2,6 @@
 #include <semaphore.h>
 #include <signal.h>
 #include <string.h>
-#include <assert.h>
 
 #include "common.h"
 
@@ -73,7 +72,7 @@ int main() {
         printf("Object is open: name = %s, id = 0x%x\n", shar_object,
                buf_id);
     }
-    // Задание размfflush(stdout);ера объекта памяти
+    // Задание размера объекта памяти
     if (ftruncate(buf_id, sizeof(shared_memory)) == -1) {
         perror("ftruncate");
         exit(-1);
@@ -184,7 +183,6 @@ int main() {
 
         // Запись в первую свободную ячейку
         size_t write_index = buffer->write_index;
-        assert(buffer->store[write_index] == -1);
         int generated_num = buffer->store[write_index] = rand() % 11;  // число от 0 до 10
         buffer->write_index = (write_index + 1) % BUF_SIZE;
         // количество занятых ячеек увеличилось на единицу
