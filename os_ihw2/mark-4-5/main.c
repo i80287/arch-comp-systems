@@ -48,10 +48,8 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    const pid_t orig_pid___ = getpid();  // TODO: REMOVE THIS
     run_program(&res, parse_res.first_workers, parse_res.second_workers,
                 parse_res.third_workers);
-    assert(getpid() == orig_pid___);
 
     deinit_resources(&res);
     return EXIT_SUCCESS;

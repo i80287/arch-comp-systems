@@ -77,7 +77,7 @@ static bool wait_for_pin(SharedMemory* sh_mem, Pin* pin) {
     return true;
 }
 
-static bool save_pin(SharedMemory* sh_mem, Pin pin,
+static bool send_pin(SharedMemory* sh_mem, Pin pin,
                      const char* message_format) {
     if (sem_wait(sh_mem->free_pins_sem) == -1) {
         perror("sem_wait[free pins sem]");
@@ -106,21 +106,22 @@ static bool save_pin(SharedMemory* sh_mem, Pin pin,
     return true;
 }
 
-static bool save_produced_pin(SharedMemory* sh_mem, Pin pin) {
-    return save_pin(
+static bool send_produced_pin(SharedMemory* sh_mem, Pin pin) {
+    return send_pin(
         sh_mem, pin,
-        "---------------------------------------------------------------\n"
-        "First worker[pid=%d] sent not crooked\n"
-        "pin[pin_id=%d] to the second workers.\n"
-        "---------------------------------------------------------------\n");
+        "+--------------------------------------------------------------\n"
+        "| First worker[pid=%d] sent not crooked\n"
+        "| pin[pin_id=%d] to the second workers.\n"
+        "+--------------------------------------------------------------\n");
 }
 
-static bool save_sharpened_pin(SharedMemory* sh_mem, Pin pin) {
-    return save_pin(sh_mem, pin,
-        "---------------------------------------------------------------\n"
-                    "Second worker[pid=%d] sent sharpened\n"
-                    "pin[pin_id=%d] to the third workers.\n"
-                    "---------------------------------------------------------------\n");
+static bool send_sharpened_pin(SharedMemory* sh_mem, Pin pin) {
+    return send_pin(
+        sh_mem, pin,
+        "+--------------------------------------------------------------\n"
+        "| Second worker[pid=%d] sent sharpened\n"
+        "| pin[pin_id=%d] to the third workers.\n"
+        "+--------------------------------------------------------------\n");
 }
 
 static void run_first_worker(SharedMemory* first_to_second_sh_mem) {
@@ -129,24 +130,24 @@ static void run_first_worker(SharedMemory* first_to_second_sh_mem) {
     while (true) {
         const Pin produced_pin = {.pin_id = rand()};
         printf(
-            "---------------------------------------------------------------\n"
-            "First worker[pid=%d] received pin[pin_id=%d]\n"
-            "and started checking it's crookness...\n"
-            "---------------------------------------------------------------\n",
+            "+--------------------------------------------------------------\n"
+            "| First worker[pid=%d] received pin[pin_id=%d]\n"
+            "| and started checking it's crookness...\n"
+            "+--------------------------------------------------------------\n",
             this_pid, produced_pin.pin_id);
 
         bool is_ok = check_pin_crookness(produced_pin);
         printf(
-            "---------------------------------------------------------------\n"
-            "First worker[pid=%d] decision:\n"
-            "pin[pin_id=%d] is %scrooked.\n"
-            "---------------------------------------------------------------\n",
-               this_pid, produced_pin.pin_id, (is_ok ? "not " : ""));
+            "+--------------------------------------------------------------\n"
+            "| First worker[pid=%d] decision:\n"
+            "| pin[pin_id=%d] is %scrooked.\n"
+            "+--------------------------------------------------------------\n",
+            this_pid, produced_pin.pin_id, (is_ok ? "not " : ""));
         if (!is_ok) {
             continue;
         }
 
-        if (!save_produced_pin(first_to_second_sh_mem, produced_pin)) {
+        if (!send_produced_pin(first_to_second_sh_mem, produced_pin)) {
             break;
         }
     }
@@ -168,19 +169,19 @@ static void run_second_worker(SharedMemory* first_to_second_sh_mem,
         }
 
         printf(
-            "---------------------------------------------------------------\n"
-            "Second worker[pid=%d] received pin[pin_id=%d]\n"
-            "and started sharpening it...\n"
-            "---------------------------------------------------------------\n",
+            "+--------------------------------------------------------------\n"
+            "| Second worker[pid=%d] received pin[pin_id=%d]\n"
+            "| and started sharpening it...\n"
+            "+--------------------------------------------------------------\n",
             this_pid, pin.pin_id);
         sharpen_pin(pin);
         printf(
-            "---------------------------------------------------------------\n"
-            "Second worker[pid=%d] sharpened pin[pin_id=%d].\n"
-            "---------------------------------------------------------------\n", this_pid,
-               pin.pin_id);
+            "+--------------------------------------------------------------\n"
+            "| Second worker[pid=%d] sharpened pin[pin_id=%d].\n"
+            "+--------------------------------------------------------------\n",
+            this_pid, pin.pin_id);
 
-        if (!save_sharpened_pin(second_to_third_sh_mem, pin)) {
+        if (!send_sharpened_pin(second_to_third_sh_mem, pin)) {
             break;
         }
     }
@@ -199,17 +200,17 @@ static void run_third_worker(SharedMemory* second_to_third_sh_mem) {
         }
 
         printf(
-            "---------------------------------------------------------------\n"
-            "Third worker[pid=%d] received sharpened\n"
-            "pin[pin_id=%d] and started checking it's quality...\n"
-            "---------------------------------------------------------------\n",
+            "+--------------------------------------------------------------\n"
+            "| Third worker[pid=%d] received sharpened\n"
+            "| pin[pin_id=%d] and started checking it's quality...\n"
+            "+--------------------------------------------------------------\n",
             this_pid, sharpened_pin.pin_id);
         bool is_ok = check_sharpened_pin_quality(sharpened_pin);
         printf(
-            "---------------------------------------------------------------\n"
-            "Third worker[pid=%d] decision:\n"
-            "pin[pin_id=%d] is sharpened %s.\n"
-            "---------------------------------------------------------------\n",
+            "+--------------------------------------------------------------\n"
+            "| Third worker[pid=%d] decision:\n"
+            "| pin[pin_id=%d] is sharpened %s.\n"
+            "+--------------------------------------------------------------\n",
             this_pid, sharpened_pin.pin_id, (is_ok ? "good enough" : "badly"));
     }
 
