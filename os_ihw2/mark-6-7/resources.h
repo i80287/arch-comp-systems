@@ -15,11 +15,11 @@ typedef struct Resources {
 
 typedef enum ResourceInitStatus {
     RESOURCE_INIT_SUCCESS,
-    RESOURCE_INIT_FAILURE
+    RESOURCE_INIT_FAILURE,
 } ResourceInitStatus;
 
-void deinit_resources(Resources* res);
-
 ResourceInitStatus init_resources(Resources* res);
+
+void deinit_resources(Resources* res);
 
 #endif
