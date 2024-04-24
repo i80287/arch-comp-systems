@@ -43,14 +43,29 @@ static InitStatus init_queue_impl(QueueInfo* queue_info) {
            queue_name);
 
     sem_t* ref_cnt_sem =
-        sem_open(ref_cnt_sem_name, SEMAPHORE_OPEN_FLAGS,
+        sem_open(ref_cnt_sem_name, NEW_SEMAPHORE_OPEN_FLAGS,
                  SEMAPHORE_OPEN_PERMS_MODE, REF_CNT_SEM_DEFAULT_VALUE);
+    bool failed = ref_cnt_sem == SEM_FAILED && errno != EEXIST;
+    if (failed) {
+        perror("sem_open");
+        return QUEUE_INIT_FAILURE;
+    }
+    const bool sem_already_exists = ref_cnt_sem == SEM_FAILED;
+    if (sem_already_exists) {
+        ref_cnt_sem = sem_open(ref_cnt_sem_name, EXISTING_SEMAPHORE_OPEN_FLAGS);
+        if (sem_post(ref_cnt_sem) == -1) {
+            perror("sem_post");
+        }
+    }
     if (ref_cnt_sem == SEM_FAILED) {
         perror("sem_open");
         return QUEUE_INIT_FAILURE;
     }
 
-    printf("Opened semaphore[address=%p,name=%s]\n", (void*)ref_cnt_sem,
+    const char* fmt = sem_already_exists 
+    ? "Opened existing semaphore[address=%p,name=%s]\n"
+    : "Created new semaphore[address=%p,name=%s]\n";
+    printf(fmt, (void*)ref_cnt_sem,
            ref_cnt_sem_name);
     queue_info->ref_count_sem = ref_cnt_sem;
     return QUEUE_INIT_SUCCESS;
