@@ -27,8 +27,8 @@ static void shutdown_signal_handler(int signal) {
     exit(ret_status);
 }
 
-static int run_second_worker(int queue_id_first_to_second,
-                             int queue_id_second_to_third) {
+static int run_second_worker(mqd_t queue_id_first_to_second,
+                             mqd_t queue_id_second_to_third) {
     while (true) {
         Pin pin;
         if (!wait_for_pin(queue_id_first_to_second, &pin)) {

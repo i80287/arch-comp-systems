@@ -4,94 +4,64 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <string.h>
 #include <unistd.h>
 
-static int create_semaphore_or_increase(key_t sem_key,
-                                        uint32_t sem_initial_value) {
-    int sem_id        = semget(sem_key, 1, NEW_SEMAPHORE_OPEN_FLAGS);
-    const bool failed = sem_id == -1 && errno != EEXIST;
-    if (failed) {
-        perror("semget");
-        return sem_id;
-    }
+static const char* get_queue_name(TieType tie_type) {
+    assert(tie_type <= SECOND_TO_THIRD_WORKER);
+    const char* queue_names[] = {
+        [FIRST_TO_SECOND_WORKER] = FIRST_TO_SECOND_WORKER_QUEUE_NAME,
+        [SECOND_TO_THIRD_WORKER] = SECOND_TO_THIRD_WORKER_QUEUE_NAME,
+    };
+    return queue_names[tie_type];
+}
 
-    const bool sem_already_exists = sem_id == -1;
-    if (sem_already_exists) {
-        sem_id = semget(sem_key, 1, EXISTING_SEMAPHORE_OPEN_FLAGS);
-    }
-
-    if (sem_id == -1) {
-        perror("semget");
-        return sem_id;
-    }
-
-    if (!sem_already_exists) {
-        printf("Created new semaphore[sem_id=%d]\n", sem_id);
-        if (semctl(sem_id, 0, SETVAL, sem_initial_value) == -1) {
-            perror("semctl");
-            if (semctl(sem_id, 0, IPC_RMID) == -1) {
-                perror("shmctl");
-            } else {
-                printf(
-                    "Could not init semaphore value. Deleted "
-                    "semaphore[sem_id=%d]\n",
-                    sem_id);
-            }
-            return -1;
-        }
-    } else {
-        printf("Opened existing semaphore[sem_id=%d]\n", sem_id);
-        struct sembuf buffer = {
-            .sem_num = 0,
-            .sem_op  = 1,
-            .sem_flg = 0,
-        };
-        if (semop(sem_id, &buffer, 1) == -1) {
-            perror("semop");
-            return -1;
-        }
-    }
-
-    return sem_id;
+static const char* get_semaphore_name(TieType tie_type) {
+    assert(tie_type <= SECOND_TO_THIRD_WORKER);
+    const char* ref_cnt_sem_names[] = {
+        [FIRST_TO_SECOND_WORKER] = FIRST_TO_SECOND_WORKER_REF_CNT_SEM_NAME,
+        [SECOND_TO_THIRD_WORKER] = SECOND_TO_THIRD_WORKER_REF_CNT_SEM_NAME,
+    };
+    return ref_cnt_sem_names[tie_type];
 }
 
 static InitStatus init_queue_impl(QueueInfo* queue_info) {
-    const TieType tie_type = queue_info->type;
-    assert(tie_type <= SECOND_TO_THIRD_WORKER);
-    const int queue_keys[] = {
-        [FIRST_TO_SECOND_WORKER] = FIRST_TO_SECOND_WORKER_QUEUE_KEY,
-        [SECOND_TO_THIRD_WORKER] = SECOND_TO_THIRD_WORKER_QUEUE_KEY,
-    };
-    const int ref_cnt_sem_keys[] = {
-        [FIRST_TO_SECOND_WORKER] = FIRST_TO_SECOND_WORKER_REF_CNT_SEM_KEY,
-        [SECOND_TO_THIRD_WORKER] = SECOND_TO_THIRD_WORKER_REF_CNT_SEM_KEY,
-    };
+    const char* queue_name       = get_queue_name(queue_info->type);
+    const char* ref_cnt_sem_name = get_semaphore_name(queue_info->type);
 
-    const int queue_key       = queue_keys[tie_type];
-    const int ref_cnt_sem_key = ref_cnt_sem_keys[tie_type];
-
-    int queue_id = msgget(queue_key, QUEUE_OPEN_FLAGS);
-    if (queue_id == -1) {
-        perror("msgget");
+    struct mq_attr mqattrs = {0};
+    mqattrs.mq_maxmsg      = MAX_QUEUE_MESSAGES;
+    mqattrs.mq_msgsize     = QUEUE_MESSAGE_SIZE;
+    mqd_t queue_id =
+        mq_open(queue_name, QUEUE_OPEN_FLAGS, QUEUE_OPEN_PERMS, &mqattrs);
+    if (queue_id == (mqd_t)-1) {
+        perror("mq_open");
         return QUEUE_INIT_FAILURE;
     }
 
     queue_info->queue_id = queue_id;
-    printf("Opened message queue[queue_id=%d]\n", queue_id);
+    printf("Opened message queue[queue_id=%d,queue_name=%s]\n", queue_id,
+           queue_name);
 
-    int sem_id                   = create_semaphore_or_increase(ref_cnt_sem_key,
-                                              REF_CNT_SEM_DEFAULT_VALUE);
-    queue_info->ref_count_sem_id = sem_id;
-    return sem_id != -1 ? QUEUE_INIT_SUCCESS : QUEUE_INIT_FAILURE;
+    sem_t* ref_cnt_sem =
+        sem_open(ref_cnt_sem_name, SEMAPHORE_OPEN_FLAGS,
+                 SEMAPHORE_OPEN_PERMS_MODE, REF_CNT_SEM_DEFAULT_VALUE);
+    if (ref_cnt_sem == SEM_FAILED) {
+        perror("sem_open");
+        return QUEUE_INIT_FAILURE;
+    }
+
+    printf("Opened semaphore[address=%p,name=%s]\n", (void*)ref_cnt_sem,
+           ref_cnt_sem_name);
+    queue_info->ref_count_sem = ref_cnt_sem;
+    return QUEUE_INIT_SUCCESS;
 }
 
 InitStatus init_queue(QueueInfo* queue_info, TieType tie_type) {
     assert(queue_info);
-    queue_info->type             = tie_type;
-    queue_info->queue_id         = -1;
-    queue_info->ref_count_sem_id = -1;
-    int ret                      = init_queue_impl(queue_info);
+    queue_info->type          = tie_type;
+    queue_info->queue_id      = -1;
+    queue_info->ref_count_sem = SEM_FAILED;
+    int ret                   = init_queue_impl(queue_info);
     if (ret == QUEUE_INIT_FAILURE) {
         deinit_queue(queue_info);
     }
@@ -99,59 +69,65 @@ InitStatus init_queue(QueueInfo* queue_info, TieType tie_type) {
     return ret;
 }
 
-static void delete_semaphore(int sem_id) {
-    if (sem_id == -1) {
-        return;
+static bool deinit_semaphore(sem_t* sem) {
+    false;
+    bool should_delete = false;
+    if (sem == SEM_FAILED) {
+        return should_delete;
     }
-    if (semctl(sem_id, 0, IPC_RMID) == -1) {
-        perror("semctl");
-    } else {
-        printf("Deleted semaphore[sem_id=%d]\n", sem_id);
-    }
-}
 
-static void delete_queue(int queue_id) {
-    if (queue_id == -1) {
-        return;
-    }
-    if (msgctl(queue_id, IPC_RMID, NULL) == -1) {
-        perror("msgctl");
+    if (sem_trywait(sem) == -1) {
+        if (errno != EAGAIN) {
+            perror("sem_trywait");
+        }
     } else {
-        printf("Deleted queue[queue_id=%d]\n", queue_id);
+        int val = 0;
+        if (sem_getvalue(sem, &val) == -1) {
+            perror("sem_getvalue");
+        } else {
+            assert(val >= 0);
+            should_delete = val == 0;
+        }
+
+        if (sem_close(sem) == -1) {
+            perror("sem_close");
+        } else {
+            printf("Closed semaphore[address=%p]\n", (void*)sem);
+        }
     }
+
+    return should_delete;
 }
 
 void deinit_queue(QueueInfo* queue_info) {
     assert(queue_info);
-
-    const int queue_id = queue_info->queue_id;
-    const int sem_id   = queue_info->ref_count_sem_id;
-    if (sem_id == -1 || queue_id == -1) {
+    mqd_t queue_id = queue_info->queue_id;
+    if (queue_id == -1) {
         return;
     }
 
-    struct sembuf buffer = {
-        .sem_num = 0,
-        .sem_op  = -1,
-        .sem_flg = IPC_NOWAIT,
-    };
-    if (semop(sem_id, &buffer, 1) == -1) {
-        bool counter_is_zero = errno == EAGAIN;
-        if (counter_is_zero) {
-            return;
-        }
+    bool should_delete = deinit_semaphore(queue_info->ref_count_sem);
 
-        perror("semop");
+    if (mq_close(queue_id) == -1) {
+        perror("mq_close");
+    } else {
+        printf("Closed queue[queue_id=%d]\n", queue_id);
     }
-    switch (semctl(sem_id, 0, GETVAL)) {
-        case -1:
-            perror("semctl");
-            break;
-        case 0:
-            delete_semaphore(sem_id);
-            delete_queue(queue_id);
-            break;
-        default:
-            break;
-    };
+
+    if (!should_delete) {
+        return;
+    }
+
+    const char* queue_name       = get_queue_name(queue_info->type);
+    const char* ref_cnt_sem_name = get_semaphore_name(queue_info->type);
+    if (sem_unlink(ref_cnt_sem_name) == -1) {
+        perror("sem_unlink");
+    } else {
+        printf("Unlinked semaphore[name=%s]\n", ref_cnt_sem_name);
+    }
+    if (mq_unlink(queue_name) == -1) {
+        perror("mq_unlink");
+    } else {
+        printf("Unlinked queue[name=%s]\n", queue_name);
+    }
 }

@@ -25,7 +25,7 @@ static void shutdown_signal_handler(int signal) {
     exit(ret_status);
 }
 
-static int run_third_worker(int queue_id) {
+static int run_third_worker(mqd_t queue_id) {
     while (true) {
         Pin sharpened_pin;
         if (!wait_for_pin(queue_id, &sharpened_pin)) {

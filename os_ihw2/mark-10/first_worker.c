@@ -25,7 +25,7 @@ static void shutdown_signal_handler(int signal) {
     exit(ret_status);
 }
 
-static int run_first_worker(int queue_id) {
+static int run_first_worker(mqd_t queue_id) {
     while (true) {
         const Pin produced_pin = {.pin_id = rand()};
         printf(

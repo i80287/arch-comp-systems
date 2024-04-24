@@ -49,20 +49,14 @@ static inline bool check_sharpened_pin_quality(Pin sharpened_pin) {
     return cos(sharpened_pin.pin_id) >= 0;
 }
 
-static inline bool wait_for_pin(int queue_id, Pin* pin) {
-    // According to man msgrcv
-    struct msgbuf {
-        long mtype;
+static inline bool wait_for_pin(mqd_t queue_id, Pin* pin) {
+    union {
+        char bytes[QUEUE_MESSAGE_SIZE + 1];
         Pin pin;
-    };
+    } buffer = {0};
 
-    struct msgbuf buffer = {
-        .mtype = 1,
-        .pin = { .pin_id = 0 },
-    };
-
-    if (msgrcv(queue_id, &buffer, sizeof(*pin), 1, 0) != sizeof(*pin)) {
-        perror("msgrcv");
+    if (mq_receive(queue_id, buffer.bytes, QUEUE_MESSAGE_SIZE, 0) != QUEUE_MESSAGE_SIZE) {
+        perror("mq_receive");
         return false;
     }
 
@@ -70,20 +64,16 @@ static inline bool wait_for_pin(int queue_id, Pin* pin) {
     return true;
 }
 
-static inline bool send_pin(int queue_id, Pin pin,
+static inline bool send_pin(mqd_t queue_id, Pin pin,
                      const char* message_format) {
-    // According to man msgsnd
-    struct msgbuf {
-        long mtype;
+    union {
+        char bytes[QUEUE_MESSAGE_SIZE + 1];
         Pin pin;
-    };
+    } buffer;
+    buffer.pin = pin;
 
-    struct msgbuf buffer = {
-        .mtype = 1,
-        .pin = pin
-    };
-    if (msgsnd(queue_id, &buffer, sizeof(pin), 0) == -1) {
-        perror("msgsnd");
+    if (mq_send(queue_id, buffer.bytes, QUEUE_MESSAGE_SIZE, 0) == -1) {
+        perror("mq_send");
         return false;
     }
     printf(message_format, pin.pin_id);
@@ -91,7 +81,7 @@ static inline bool send_pin(int queue_id, Pin pin,
     return true;
 }
 
-static inline bool send_produced_pin(int queue_id, Pin pin) {
+static inline bool send_produced_pin(mqd_t queue_id, Pin pin) {
     return send_pin(
         queue_id, pin,
         "+--------------------------------------------------------------\n"
@@ -100,7 +90,7 @@ static inline bool send_produced_pin(int queue_id, Pin pin) {
         "+--------------------------------------------------------------\n");
 }
 
-static inline bool send_sharpened_pin(int queue_id, Pin pin) {
+static inline bool send_sharpened_pin(mqd_t queue_id, Pin pin) {
     return send_pin(
         queue_id, pin,
         "+--------------------------------------------------------------\n"

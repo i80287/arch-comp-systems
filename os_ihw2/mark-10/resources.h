@@ -13,10 +13,8 @@
 #include <stddef.h>
 
 #include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <sys/shm.h>
-#include <sys/sem.h>
+#include <mqueue.h>
+#include <semaphore.h>
 #include <stdatomic.h>
 
 /// @brief Pin that workets pass to each other.
@@ -24,15 +22,20 @@ typedef struct Pin {
     int pin_id;
 } Pin;
 
+static const char FIRST_TO_SECOND_WORKER_QUEUE_NAME[] = "/1-2-queue";
+static const char SECOND_TO_THIRD_WORKER_QUEUE_NAME[] = "/2-3-queue";
+
+static const char FIRST_TO_SECOND_WORKER_REF_CNT_SEM_NAME[] = "1-2-ref-cnt-sem";
+static const char SECOND_TO_THIRD_WORKER_REF_CNT_SEM_NAME[] = "2-3-ref-cnt-sem";
+
 enum {
-    FIRST_TO_SECOND_WORKER_QUEUE_KEY = 8743490,
-    SECOND_TO_THIRD_WORKER_QUEUE_KEY = 34549878,
-    FIRST_TO_SECOND_WORKER_REF_CNT_SEM_KEY = 3482334,
-    SECOND_TO_THIRD_WORKER_REF_CNT_SEM_KEY = 34534556,
-    QUEUE_OPEN_FLAGS = 0666 | IPC_CREAT,
-    NEW_SEMAPHORE_OPEN_FLAGS = 0666 | IPC_CREAT | IPC_EXCL,
-    EXISTING_SEMAPHORE_OPEN_FLAGS = 0666,
+    QUEUE_OPEN_FLAGS = O_RDWR | O_CREAT,
+    QUEUE_OPEN_PERMS = 0666,
+    SEMAPHORE_OPEN_FLAGS = O_CREAT,
+    SEMAPHORE_OPEN_PERMS_MODE = 0666,
     REF_CNT_SEM_DEFAULT_VALUE = 1,
+    MAX_QUEUE_MESSAGES = 4,
+    QUEUE_MESSAGE_SIZE = sizeof(Pin),
 };
 
 typedef enum TieType {
@@ -41,8 +44,8 @@ typedef enum TieType {
 } TieType;
 
 typedef struct QueueInfo {
-    int queue_id;
-    int ref_count_sem_id;
+    mqd_t queue_id;
+    sem_t* ref_count_sem;
     TieType type;
 } QueueInfo;
 
