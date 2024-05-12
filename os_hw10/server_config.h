@@ -17,6 +17,53 @@ static inline void report_invalid_command_args(const char* exec_path) {
             exec_path, exec_path);
 }
 
+static inline void print_server_info(const struct sockaddr* socket_address,
+                                     socklen_t addrlen) {
+    char host_name[1024] = {0};
+    char port_str[16]    = {0};
+    int gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
+                              sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
+    if (gai_err != 0) {
+        fprintf(stderr, "Could not fetch info about current server: %s\n",
+                gai_strerror(gai_err));
+    } else {
+        printf(
+            "This server address: %s\n"
+            "Port: %s\n",
+            host_name, port_str);
+    }
+
+    gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
+                          sizeof(port_str), 0);
+    if (gai_err == 0) {
+        printf("Readable server address form: %s\nReadable port form: %s\n", host_name,
+               port_str);
+    }
+}
+
+static inline void print_client_info(const struct sockaddr* socket_address,
+                                     socklen_t addrlen) {
+    char host_name[1024] = {0};
+    char port_str[16]    = {0};
+    int gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
+                              sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
+    if (gai_err != 0) {
+        fprintf(stderr, "Could not fetch info about accepted client: %s\n",
+                gai_strerror(gai_err));
+    } else {
+        printf(
+            "Accepted client with address: %s\n"
+            "Port: %s\n",
+            host_name, port_str);
+    }
+
+    gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
+                          sizeof(port_str), 0);
+    if (gai_err == 0) {
+        printf("Readable address form: %s\nReadable port form: %s\n", host_name, port_str);
+    }
+}
+
 static inline int create_server_socket() {
     int server_sock_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_sock_fd < 0) {
@@ -43,30 +90,10 @@ static inline bool configure_socket(int server_sock_fd, uint16_t server_port) {
         perror("listen");
         return false;
     }
+
+    print_server_info((const struct sockaddr*)&server_socket_address,
+                      sizeof(server_socket_address));
     return true;
-}
-
-static inline void print_client_info(const struct sockaddr* socket_address,
-                                     socklen_t addrlen) {
-    char host_name[1024] = {0};
-    char port_str[16]    = {0};
-    int gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
-                              sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
-    if (gai_err != 0) {
-        fprintf(stderr, "Could not fetch info about accepted client: %s\n",
-                gai_strerror(gai_err));
-    } else {
-        printf(
-            "Accepted client with address: %s\n"
-            "Port: %s\n",
-            host_name, port_str);
-    }
-
-    gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
-                          sizeof(port_str), 0);
-    if (gai_err == 0) {
-        printf("Readable address form: %s\nReadable port form: %s\n", host_name, port_str);
-    }
 }
 
 static inline int accept_client(int server_sock_fd) {
