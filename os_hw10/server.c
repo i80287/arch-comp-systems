@@ -14,12 +14,9 @@ static int run_server_impl(int first_client_sock_fd, int second_client_sock_fd) 
     char message_buffer[MESSAGE_BUFFER_SIZE] = {0};
     bool received_end_message                = false;
     do {
-        const ssize_t received_size =
-            recv(first_client_sock_fd, message_buffer, MESSAGE_BUFFER_SIZE, 0);
+        const ssize_t received_size = recv(first_client_sock_fd, message_buffer, MESSAGE_BUFFER_SIZE, 0);
         if (received_size <= 0) {
-            if (received_size < 0) {
-                perror("recv");
-            }
+            perror("recv");
             break;
         }
 

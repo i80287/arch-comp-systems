@@ -64,7 +64,7 @@ static inline void print_server_info(const struct sockaddr* socket_address,
     }
 }
 
-static inline int create_server_socket(int16_t server_port) {
+static inline int create_server_socket(uint16_t server_port) {
     int server_sock_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_sock_fd == -1) {
         perror("socket");
