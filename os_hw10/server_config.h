@@ -64,36 +64,34 @@ static inline void print_server_info(const struct sockaddr* socket_address,
     }
 }
 
-static inline int create_server_socket() {
+static inline int create_server_socket(int16_t server_port) {
     int server_sock_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (server_sock_fd < 0) {
+    if (server_sock_fd == -1) {
         perror("socket");
+        return -1;
     }
-    return server_sock_fd;
-}
-
-static inline bool configure_socket(int server_sock_fd, uint16_t server_port) {
     const struct sockaddr_in server_socket_address = {
         .sin_family      = AF_INET,
         .sin_port        = htons(server_port),
         .sin_addr.s_addr = htonl(INADDR_ANY),
     };
-
     bool bind_failed = bind(server_sock_fd, (const struct sockaddr*)&server_socket_address,
                             sizeof(server_socket_address)) == -1;
     if (bind_failed) {
         perror("bind");
-        return false;
+        goto create_server_socket_cleanup;
     }
     bool listen_failed = listen(server_sock_fd, MAX_NUMBER_OF_CLIENTS) == -1;
     if (listen_failed) {
         perror("listen");
-        return false;
+        goto create_server_socket_cleanup;
     }
-
     print_server_info((const struct sockaddr*)&server_socket_address,
                       sizeof(server_socket_address));
-    return true;
+    return server_sock_fd;
+create_server_socket_cleanup:
+    close(server_sock_fd);
+    return -1;
 }
 
 static inline int accept_client(int server_sock_fd) {

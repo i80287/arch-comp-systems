@@ -45,12 +45,9 @@ static int run_server(uint16_t server_port) {
     int first_client_sock_fd  = -1;
     int second_client_sock_fd = -1;
 
-    sock_fd = create_server_socket();
+    sock_fd = create_server_socket(server_port);
     if (sock_fd == -1) {
         goto run_server_empty_cleanup_label;
-    }
-    if (!configure_socket(sock_fd, server_port)) {
-        goto run_server_server_sock_cleanup_label;
     }
     first_client_sock_fd = accept_client(sock_fd);
     if (first_client_sock_fd == -1) {
