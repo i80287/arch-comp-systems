@@ -1,6 +1,7 @@
 #pragma once
 
-#include <arpa/inet.h>   // for htonl, htons
+#include <arpa/inet.h>  // for htonl, htons
+#include <errno.h>
 #include <netdb.h>       // for getnameinfo, gai_strerror, NI_NUMERICHOST
 #include <netinet/in.h>  // for sockaddr_in, INADDR_ANY, IPPROTO_TCP
 #include <stdbool.h>     // for bool, false, true
@@ -15,30 +16,6 @@ static inline void report_invalid_command_args(const char* exec_path) {
             "Usage: %s <Server Port>\n"
             "Example: %s 8088\n",
             exec_path, exec_path);
-}
-
-static inline void print_server_info(const struct sockaddr* socket_address,
-                                     socklen_t addrlen) {
-    char host_name[1024] = {0};
-    char port_str[16]    = {0};
-    int gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
-                              sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
-    if (gai_err != 0) {
-        fprintf(stderr, "Could not fetch info about current server: %s\n",
-                gai_strerror(gai_err));
-    } else {
-        printf(
-            "This server address: %s\n"
-            "Port: %s\n",
-            host_name, port_str);
-    }
-
-    gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
-                          sizeof(port_str), 0);
-    if (gai_err == 0) {
-        printf("Readable server address form: %s\nReadable port form: %s\n", host_name,
-               port_str);
-    }
 }
 
 static inline void print_client_info(const struct sockaddr* socket_address,
@@ -61,6 +38,29 @@ static inline void print_client_info(const struct sockaddr* socket_address,
                           sizeof(port_str), 0);
     if (gai_err == 0) {
         printf("Readable address form: %s\nReadable port form: %s\n", host_name, port_str);
+    }
+}
+
+static inline void print_server_info(const struct sockaddr* socket_address,
+                                     socklen_t addrlen) {
+    char host_name[1024] = {0};
+    char port_str[16]    = {0};
+    int gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
+                              sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
+    if (gai_err != 0) {
+        fprintf(stderr, "Could not fetch info about current server: %s\n",
+                gai_strerror(gai_err));
+    } else {
+        printf(
+            "This server address: %s\n"
+            "Port: %s\n",
+            host_name, port_str);
+    }
+    gai_err = getnameinfo(socket_address, addrlen, host_name, sizeof(host_name), port_str,
+                          sizeof(port_str), 0);
+    if (gai_err == 0) {
+        printf("Readable server address form: %s\nReadable port form: %s\n", host_name,
+               port_str);
     }
 }
 
