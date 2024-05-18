@@ -8,7 +8,7 @@
 #include <string.h>   // for strlen
 
 typedef struct ParseResult {
-    const char* ip_address;
+    const char* server_ip;
     uint16_t port;
     bool succeeded;
 } ParseResult;
@@ -45,8 +45,8 @@ static inline ParseResult parse_args(int argc, const char* argv[]) {
     if (argc != 3) {
         return res;
     }
-    res.ip_address = argv[1];
-    if (!verify_ip(res.ip_address)) {
+    res.server_ip = argv[1];
+    if (!verify_ip(res.server_ip)) {
         return res;
     }
     if (!parse_port(argv[2], &res.port)) {

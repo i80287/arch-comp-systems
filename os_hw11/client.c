@@ -31,8 +31,8 @@ static int run_client_impl(int sock_fd) {
     return received_end_message ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-static int run_client(const char* multicast_ip, uint16_t multicast_port) {
-    int sock_fd = create_client_socket(multicast_ip, multicast_port);
+static int run_client(uint16_t client_port) {
+    int sock_fd = create_client_socket(client_port);
     if (sock_fd == -1) {
         return EXIT_FAILURE;
     }
@@ -42,11 +42,11 @@ static int run_client(const char* multicast_ip, uint16_t multicast_port) {
 }
 
 int main(int argc, const char* argv[]) {
-    ParseResult res = parse_args(argc, argv);
-    if (!res.succeeded) {
+    uint16_t client_port;
+    if (argc != 2 || !parse_port(argv[1], &client_port)) {
         report_invalid_command_args(argv[0]);
         return EXIT_FAILURE;
     }
 
-    return run_client(res.ip_address, res.port);
+    return run_client(client_port);
 }
