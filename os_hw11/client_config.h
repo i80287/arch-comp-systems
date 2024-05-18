@@ -22,9 +22,11 @@ static inline int create_client_socket(uint16_t client_port) {
         return -1;
     }
 
-    const struct sockaddr_in broadcast_address = {.sin_family      = AF_INET,
-                                                  .sin_port        = htons(client_port),
-                                                  .sin_addr.s_addr = htonl(INADDR_ANY)};
+    const struct sockaddr_in broadcast_address = {
+        .sin_family      = AF_INET,
+        .sin_port        = htons(client_port),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
     bool bind_failed =
         bind(sock_fd, (const struct sockaddr*)&broadcast_address, sizeof(broadcast_address)) == -1;
     if (bind_failed) {
