@@ -12,7 +12,7 @@
 #include "parser.h"         // for parse_args, ParseResult
 #include "server_config.h"  // for create_server_socket, report_invalid_command_args
 
-static int run_server_impl(int server_sock_fd, const struct sockaddr_in server_address) {
+static int run_server_impl(int server_sock_fd, const struct sockaddr_in multicast_address) {
     char message_buffer[MESSAGE_BUFFER_SIZE] = {0};
     bool received_end_message                = false;
     while (!received_end_message && fgets(message_buffer, MESSAGE_BUFFER_SIZE, stdin)) {
@@ -28,8 +28,8 @@ static int run_server_impl(int server_sock_fd, const struct sockaddr_in server_a
 
         size_t send_size = message_size + 1;
         if (sendto(server_sock_fd, message_buffer, send_size, 0,
-                   (const struct sockaddr*)&server_address,
-                   sizeof(server_address)) != (ssize_t)send_size) {
+                   (const struct sockaddr*)&multicast_address,
+                   sizeof(multicast_address)) != (ssize_t)send_size) {
             perror("send");
             break;
         }
@@ -39,15 +39,15 @@ static int run_server_impl(int server_sock_fd, const struct sockaddr_in server_a
     return received_end_message ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-static int run_server(const char* server_ip, uint16_t server_port) {
+static int run_server(const char* multicast_ip, uint16_t multicast_port) {
     int sock_fd = create_server_socket();
     if (sock_fd == -1) {
         return EXIT_FAILURE;
     }
     const struct sockaddr_in broadcast_address = {
         .sin_family      = AF_INET,
-        .sin_port        = htons(server_port),
-        .sin_addr.s_addr = inet_addr(server_ip),
+        .sin_port        = htons(multicast_port),
+        .sin_addr.s_addr = inet_addr(multicast_ip),
     };
     int ret = run_server_impl(sock_fd, broadcast_address);
     close(sock_fd);
@@ -61,5 +61,5 @@ int main(int argc, const char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    return run_server(res.server_ip, res.port);
+    return run_server(res.ip_address, res.port);
 }

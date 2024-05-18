@@ -7,7 +7,7 @@
 
 static inline void report_invalid_command_args(const char* exec_path) {
     fprintf(stderr,
-            "Usage: %s <ip address> <server port>\n"
+            "Usage: %s <multicast ip> <multicast port>\n"
             "Example: %s 127.0.0.1 8088\n",
             exec_path, exec_path);
 }
@@ -19,13 +19,9 @@ static inline int create_server_socket() {
         return -1;
     }
 
-    /* Set socket to allow broadcast */
-    const int broadcast_permission = 1;
-    int setsockopt_res =
-        setsockopt(server_sock_fd, SOL_SOCKET, SO_BROADCAST, (const void*)&broadcast_permission,
-                   sizeof(broadcast_permission));
-
-    if (setsockopt_res == -1) {
+    // Set TTL of multicast packet
+    const int ttl = 64;
+    if (setsockopt(server_sock_fd, IPPROTO_IP, IP_MULTICAST_TTL, (const void*)&ttl, sizeof(ttl)) == -1) {
         perror("setsockopt");
         close(server_sock_fd);
         return -1;
