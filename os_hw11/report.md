@@ -177,31 +177,31 @@ static int run_client_impl(int sock_fd) {
 
 <!-- #### Сообщение с подсказкой по использованию при неверно введённых аргументах при запуске сервера:
 
-![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img1.png?raw=true)
+![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img1.png?raw=true)
 
 #### Сообщение с подсказкой по использованию при неверно введённых аргументах при запуске клиента (у обоих клиентов подсказки одинаковые):
 
-![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img2.png?raw=true)
+![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img2.png?raw=true)
 
 #### Запуск сервера
 
-![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img3.png?raw=true)
+![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img3.png?raw=true)
 
 #### Запуск одного из клиентов, сервер сообщил информацию о новом клиенте
 
-![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img4.png?raw=true)
+![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img4.png?raw=true)
 
 #### Запуск второго клиента, сервер сообщил информацию о новом клиенте
 
-![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img5.png?raw=true)
+![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img5.png?raw=true)
 
 #### Первому клиенту было введено 4 сообщения, сервер переотправил их второму клиенту, который вывел их на экран
 
-![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img6.png?raw=true)
+![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img6.png?raw=true)
 
 #### Завершение работы всех трёх программ при вводе сообщения "The End"
 
-![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw10/images/img7.png?raw=true) -->
+![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/img7.png?raw=true) -->
 
 ---
 
