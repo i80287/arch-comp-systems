@@ -71,7 +71,7 @@ static int run_server_impl(int server_sock_fd,
         }
 
         printf(
-            "Sent message \"%s\" length %zu to all listeners\n",
+            "Sent message \"%s\" of length %zu to all listeners\n",
             message_buffer, message_size);
     } while (!received_end_message);
 
