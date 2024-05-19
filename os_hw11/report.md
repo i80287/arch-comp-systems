@@ -1,3 +1,5 @@
+# Отчёт о выполении ДЗ №11
+
 кормилицын владимир алексеевич, БПИ226
 
 ## Описание программ
@@ -236,7 +238,7 @@ static inline void print_socket_address_info(
 
 ![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/2.png?raw=true)
 
-#### Было введено 2 сообщение, которые сервер отправил всем слушателям по адресу 192.168.1.3:49524
+#### Было введено 2 сообщения, которые сервер отправил всем слушателям по адресу 192.168.1.3:49524
 
 ![client_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_hw11/images/3.png?raw=true)
 
