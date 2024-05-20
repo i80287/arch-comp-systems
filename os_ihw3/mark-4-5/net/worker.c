@@ -12,17 +12,18 @@ static bool send_worker_type_info(int socket_fd,
                                   struct sockaddr_in* server_sock_addr,
                                   WorkerType type) {
     union {
-        char bytes[sizeof(type)];
+        char bytes[NET_BUFFER_SIZE];
         WorkerType type;
     } buffer;
     buffer.type = type;
-    if (sendto(socket_fd, buffer.bytes, sizeof(buffer.bytes), 0,
+    if (sendto(socket_fd, buffer.bytes, sizeof(type), 0,
                (const struct sockaddr*)server_sock_addr,
-               sizeof(*server_sock_addr)) != sizeof(buffer.bytes)) {
+               sizeof(*server_sock_addr)) != sizeof(type)) {
         perror("sendto[while sending worker type to the server]");
         return false;
     }
 
+    printf("Sent type '%d' of this worker to the server\n", type);
     return true;
 }
 
@@ -82,20 +83,18 @@ void deinit_worker(Worker worker) {
     close(worker->worker_sock_fd);
 }
 
-static void print_sock_addr_info(const struct sockaddr_in* sock_addr) {
-    const struct sockaddr* socket_address =
-        (const struct sockaddr*)sock_addr;
-    const socklen_t socket_address_size = sizeof(*sock_addr);
-    char host_name[1024]                = {0};
-    char port_str[16]                   = {0};
+void print_sock_addr_info(const struct sockaddr* socket_address,
+                          const socklen_t socket_address_size) {
+    char host_name[1024] = {0};
+    char port_str[16]    = {0};
     int gai_err =
         getnameinfo(socket_address, socket_address_size, host_name,
                     sizeof(host_name), port_str, sizeof(port_str),
                     NI_NUMERICHOST | NI_NUMERICSERV | NI_DGRAM);
     if (gai_err == 0) {
         printf(
-            "Numeric server socket address: %s\n"
-            "Numeric server Port: %s\n",
+            "Numeric socket address: %s\n"
+            "Numeric socket port: %s\n",
             host_name, port_str);
     } else {
         fprintf(stderr, "Could not fetch info about socket address: %s\n",
@@ -106,11 +105,7 @@ static void print_sock_addr_info(const struct sockaddr_in* sock_addr) {
                           sizeof(host_name), port_str, sizeof(port_str),
                           NI_DGRAM);
     if (gai_err == 0) {
-        printf("Server socket address: %s\nServer port: %s\n", host_name,
+        printf("Socket address: %s\nSocket port: %s\n", host_name,
                port_str);
     }
-}
-
-void print_worker_info(Worker worker) {
-    print_sock_addr_info(&worker->server_sock_addr);
 }

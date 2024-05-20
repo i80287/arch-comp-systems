@@ -9,28 +9,28 @@
 
 static void log_received_pin(Pin pin) {
     printf(
-        "+----------------------------------------------\n"
+        "+-----------------------------------------------------\n"
         "| First worker received pin[pin_id=%d]\n"
         "| and started checking it's crookness...\n"
-        "+----------------------------------------------\n",
+        "+-----------------------------------------------------\n",
         pin.pin_id);
 }
 
 static void log_checked_pin(Pin pin, bool check_result) {
     printf(
-        "+----------------------------------------------\n"
+        "+-----------------------------------------------------\n"
         "| First worker decision:\n"
         "| pin[pin_id=%d] is%s crooked.\n"
-        "+----------------------------------------------\n",
+        "+-----------------------------------------------------\n",
         pin.pin_id, (check_result ? " not" : ""));
 }
 
 static void log_sent_pin(Pin pin) {
     printf(
-        "+----------------------------------------------\n"
+        "+-----------------------------------------------------\n"
         "| First worker sent not crooked\n"
         "| pin[pin_id=%d] to the second stage workers.\n"
-        "+----------------------------------------------\n",
+        "+-----------------------------------------------------\n",
         pin.pin_id);
 }
 
@@ -61,7 +61,7 @@ static int run_worker(const char* server_ip_address,
                       uint16_t server_port) {
     Worker worker;
     if (!init_worker(worker, server_ip_address, server_port,
-                                   FIRST_STAGE_WORKER)) {
+                     FIRST_STAGE_WORKER)) {
         return EXIT_FAILURE;
     }
 

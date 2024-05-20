@@ -111,9 +111,7 @@ void print_invalid_args_error_server(ParseStatus status,
 
     fprintf(stderr,
             "CLI args error: %s\n"
-            "Usage: %s <server port> <server type>\n"
-            "Where server type = 0 for type [stage 1 -> stage 2]\n"
-            "and server type = 1 for type [stage 2 -> stage 3]\n"
-            "Example: %s 42592 1\n",
+            "Usage: %s <server port>\n"
+            "Example: %s 42592\n",
             error_str, program_path, program_path);
 }
