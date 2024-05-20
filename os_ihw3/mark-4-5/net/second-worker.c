@@ -4,7 +4,7 @@
 
 #include "../util/parser.h"  // for parse_args_worker, print_invalid_args_er...
 #include "pin.h"             // for Pin
-#include "worker-tools.h"  // for worker_should_stop, Worker, deinit_worker
+#include "worker-tools.h"    // for worker_should_stop, Worker, deinit_worker
 
 static void log_received_pin(Pin pin) {
     printf(
@@ -63,11 +63,9 @@ static int start_runtime_loop(Worker worker) {
     return ret;
 }
 
-static int run_worker(const char* server_ip_address,
-                      uint16_t fserver_port) {
+static int run_worker(const char* server_ip_address, uint16_t fserver_port) {
     Worker worker;
-    if (!init_worker(worker, server_ip_address, fserver_port,
-                     SECOND_STAGE_WORKER)) {
+    if (!init_worker(worker, server_ip_address, fserver_port, SECOND_STAGE_WORKER)) {
         return EXIT_FAILURE;
     }
 

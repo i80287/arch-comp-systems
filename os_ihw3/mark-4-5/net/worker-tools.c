@@ -1,26 +1,26 @@
 #include "worker-tools.h"
-#include <arpa/inet.h>              // for htons, inet_addr
-#include <errno.h>                  // for EAGAIN, EWOULDBLOCK, errno
-#include <netdb.h>                  // for getnameinfo, gai_strerror, NI_NUM...
-#include <netinet/in.h>             // for sockaddr_in, IPPROTO_TCP, in_addr
-#include <netinet/tcp.h>            // for TCP_KEEPIDLE
-#include <stdint.h>                 // for uint16_t, uint32_t
-#include <stdio.h>                  // for perror, printf, fprintf, stderr
-#include <sys/socket.h>             // for setsockopt, connect, recv, sendto, SOL_SOCKET, SO_KEEPALIVE
-#include <unistd.h>                 // for close, ssize_t
-#include "../util/config.h"         // for MAX_SLEEP_TIME
-#include "net-config.h"             // for NET_BUFFER_SIZE, is_shutdown_message
 
-static bool send_worker_type_info(int socket_fd,
-                                  struct sockaddr_in* server_sock_addr,
+#include <arpa/inet.h>    // for htons, inet_addr
+#include <errno.h>        // for EAGAIN, EWOULDBLOCK, errno
+#include <netdb.h>        // for getnameinfo, gai_strerror, NI_NUM...
+#include <netinet/in.h>   // for sockaddr_in, IPPROTO_TCP, in_addr
+#include <netinet/tcp.h>  // for TCP_KEEPIDLE
+#include <stdint.h>       // for uint16_t, uint32_t
+#include <stdio.h>        // for perror, printf, fprintf, stderr
+#include <sys/socket.h>   // for setsockopt, connect, recv, sendto, SOL_SOCKET, SO_KEEPALIVE
+#include <unistd.h>       // for close, ssize_t
+
+#include "../util/config.h"  // for MAX_SLEEP_TIME
+#include "net-config.h"      // for NET_BUFFER_SIZE, is_shutdown_message
+
+static bool send_worker_type_info(int socket_fd, struct sockaddr_in* server_sock_addr,
                                   WorkerType type) {
     union {
         char bytes[NET_BUFFER_SIZE];
         WorkerType type;
     } buffer;
     buffer.type = type;
-    if (sendto(socket_fd, buffer.bytes, sizeof(type), 0,
-               (const struct sockaddr*)server_sock_addr,
+    if (sendto(socket_fd, buffer.bytes, sizeof(type), 0, (const struct sockaddr*)server_sock_addr,
                sizeof(*server_sock_addr)) != sizeof(type)) {
         perror("sendto[while sending worker type to the server]");
         return false;
@@ -30,17 +30,14 @@ static bool send_worker_type_info(int socket_fd,
     return true;
 }
 
-static bool connect_to_server(int socket_fd,
-                              struct sockaddr_in* server_sock_addr,
-                              const char* server_ip, uint16_t server_port,
-                              WorkerType type) {
+static bool connect_to_server(int socket_fd, struct sockaddr_in* server_sock_addr,
+                              const char* server_ip, uint16_t server_port, WorkerType type) {
     server_sock_addr->sin_family      = AF_INET;
     server_sock_addr->sin_port        = htons(server_port);
     server_sock_addr->sin_addr.s_addr = inet_addr(server_ip);
 
-    bool failed =
-        connect(socket_fd, (const struct sockaddr*)server_sock_addr,
-                sizeof(*server_sock_addr)) == -1;
+    bool failed = connect(socket_fd, (const struct sockaddr*)server_sock_addr,
+                          sizeof(*server_sock_addr)) == -1;
     if (failed) {
         perror("connect");
         return false;
@@ -49,8 +46,7 @@ static bool connect_to_server(int socket_fd,
     // Enable sending of keep-alive messages
     // on connection-oriented sockets.
     uint32_t val = 1;
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &val,
-                   sizeof(val)) == -1) {
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1) {
         perror("setsockopt");
         return false;
     }
@@ -59,16 +55,14 @@ static bool connect_to_server(int socket_fd,
     // before TCP starts sending keepalive probes, if the socket
     // option SO_KEEPALIVE has been set on this socket.
     val = MAX_SLEEP_TIME;
-    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &val,
-                   sizeof(val)) == -1) {
+    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) == -1) {
         perror("setsockopt");
         return false;
     }
 
     if (!send_worker_type_info(socket_fd, server_sock_addr, type)) {
-        fprintf(stderr,
-                "Could not send self type %d to the server %s:%u\n", type,
-                server_ip, server_port);
+        fprintf(stderr, "Could not send self type %d to the server %s:%u\n", type, server_ip,
+                server_port);
         return false;
     }
 
@@ -83,17 +77,15 @@ static int create_socket() {
     return sock_fd;
 }
 
-bool init_worker(Worker worker, const char* server_ip,
-                 uint16_t server_port, WorkerType type) {
+bool init_worker(Worker worker, const char* server_ip, uint16_t server_port, WorkerType type) {
     worker->type           = type;
     worker->worker_sock_fd = create_socket();
     if (worker->worker_sock_fd == -1) {
         return false;
     }
 
-    bool connected = connect_to_server(worker->worker_sock_fd,
-                                       &worker->server_sock_addr,
-                                       server_ip, server_port, type);
+    bool connected = connect_to_server(worker->worker_sock_fd, &worker->server_sock_addr, server_ip,
+                                       server_port, type);
     if (!connected) {
         close(worker->worker_sock_fd);
     }
@@ -109,32 +101,28 @@ void print_sock_addr_info(const struct sockaddr* socket_address,
                           const socklen_t socket_address_size) {
     char host_name[1024] = {0};
     char port_str[16]    = {0};
-    int gai_err          = getnameinfo(
-        socket_address, socket_address_size, host_name, sizeof(host_name),
-        port_str, sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
+    int gai_err = getnameinfo(socket_address, socket_address_size, host_name, sizeof(host_name),
+                              port_str, sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
     if (gai_err == 0) {
         printf(
             "Numeric socket address: %s\n"
             "Numeric socket port: %s\n",
             host_name, port_str);
     } else {
-        fprintf(stderr, "Could not fetch info about socket address: %s\n",
-                gai_strerror(gai_err));
+        fprintf(stderr, "Could not fetch info about socket address: %s\n", gai_strerror(gai_err));
     }
 
-    gai_err =
-        getnameinfo(socket_address, socket_address_size, host_name,
-                    sizeof(host_name), port_str, sizeof(port_str), 0);
+    gai_err = getnameinfo(socket_address, socket_address_size, host_name, sizeof(host_name),
+                          port_str, sizeof(port_str), 0);
     if (gai_err == 0) {
-        printf("Socket address: %s\nSocket port: %s\n", host_name,
-               port_str);
+        printf("Socket address: %s\nSocket port: %s\n", host_name, port_str);
     }
 }
 
 bool worker_should_stop(const Worker worker) {
     char buffer[NET_BUFFER_SIZE] = {0};
-    ssize_t bytes_read           = recv(worker->worker_sock_fd, buffer,
-                                        sizeof(buffer), MSG_DONTWAIT | MSG_PEEK);
+    ssize_t bytes_read =
+        recv(worker->worker_sock_fd, buffer, sizeof(buffer), MSG_DONTWAIT | MSG_PEEK);
     if (bytes_read < 0) {
         const int errno_val = errno;
         if (errno_val == EAGAIN || errno_val == EWOULDBLOCK) {

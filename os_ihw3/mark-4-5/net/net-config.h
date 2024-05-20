@@ -17,7 +17,5 @@ static inline bool is_shutdown_message(const char* bytes, size_t size) {
 }
 
 enum {
-    NET_BUFFER_SIZE = sizeof(Pin) > SHUTDOWN_MESSAGE_SIZE
-                          ? sizeof(Pin)
-                          : SHUTDOWN_MESSAGE_SIZE
+    NET_BUFFER_SIZE = sizeof(Pin) > SHUTDOWN_MESSAGE_SIZE ? sizeof(Pin) : SHUTDOWN_MESSAGE_SIZE
 };

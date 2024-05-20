@@ -68,8 +68,7 @@ ParseResultServer parse_args_server(int argc, const char* argv[]) {
     return res;
 }
 
-void print_invalid_args_error_worker(ParseStatus status,
-                                     const char* program_path) {
+void print_invalid_args_error_worker(ParseStatus status, const char* program_path) {
     const char* error_str;
     switch (status) {
         case PARSE_INVALID_ARGC:
@@ -93,8 +92,7 @@ void print_invalid_args_error_worker(ParseStatus status,
             error_str, program_path, program_path);
 }
 
-void print_invalid_args_error_server(ParseStatus status,
-                                     const char* program_path) {
+void print_invalid_args_error_server(ParseStatus status, const char* program_path) {
     const char* error_str;
     switch (status) {
         case PARSE_INVALID_ARGC:

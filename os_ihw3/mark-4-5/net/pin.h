@@ -28,7 +28,7 @@ static inline bool pins_queue_try_put(PinsQueue queue, Pin pin) {
     if (!pins_queue_full(queue)) {
         assert(queue->write_pos < PINS_QUEUE_MAX_SIZE);
         queue->array[queue->write_pos] = pin;
-        queue->write_pos = (queue->write_pos + 1) % PINS_QUEUE_MAX_SIZE;
+        queue->write_pos               = (queue->write_pos + 1) % PINS_QUEUE_MAX_SIZE;
         queue->queue_size++;
         return true;
     }

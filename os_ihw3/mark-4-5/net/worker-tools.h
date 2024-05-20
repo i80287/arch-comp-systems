@@ -46,13 +46,11 @@ typedef struct Worker {
     struct sockaddr_in server_sock_addr;
 } Worker[1];
 
-bool init_worker(Worker worker, const char* server_ip,
-                 uint16_t server_port, WorkerType type);
+bool init_worker(Worker worker, const char* server_ip, uint16_t server_port, WorkerType type);
 void deinit_worker(Worker worker);
 
 bool worker_should_stop(const Worker worker);
-void print_sock_addr_info(const struct sockaddr* address,
-                          socklen_t sock_addr_len);
+void print_sock_addr_info(const struct sockaddr* address, socklen_t sock_addr_len);
 static inline void print_worker_info(Worker worker) {
     print_sock_addr_info((const struct sockaddr*)&worker->server_sock_addr,
                          sizeof(worker->server_sock_addr));
@@ -84,8 +82,7 @@ static inline void handle_errno(const char* cause) {
     }
 }
 
-static inline void handle_recvfrom_error(const char* bytes,
-                                         ssize_t read_bytes) {
+static inline void handle_recvfrom_error(const char* bytes, ssize_t read_bytes) {
     if (read_bytes > 0) {
         if (is_shutdown_message(bytes, (size_t)read_bytes)) {
             printf(
@@ -95,8 +92,8 @@ static inline void handle_recvfrom_error(const char* bytes,
             return;
         }
 
-        fprintf(stderr, "Read %zu unknown bytes: \"%.*s\"\n",
-                (size_t)read_bytes, (int)read_bytes, bytes);
+        fprintf(stderr, "Read %zu unknown bytes: \"%.*s\"\n", (size_t)read_bytes, (int)read_bytes,
+                bytes);
     }
 
     handle_errno("recvfrom");
@@ -106,9 +103,7 @@ static inline Pin receive_new_pin() {
     return pin;
 }
 static inline bool check_pin_crookness(Pin pin) {
-    uint32_t sleep_time =
-        (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) +
-        MIN_SLEEP_TIME;
+    uint32_t sleep_time = (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) + MIN_SLEEP_TIME;
     sleep(sleep_time);
 
     uint32_t x = (uint32_t)pin.pin_id;
@@ -118,15 +113,13 @@ static inline bool check_pin_crookness(Pin pin) {
     return x & 1;
 #endif
 }
-static inline bool send_pin(int sock_fd,
-                            const struct sockaddr_in* sock_addr, Pin pin) {
+static inline bool send_pin(int sock_fd, const struct sockaddr_in* sock_addr, Pin pin) {
     union {
         char bytes[NET_BUFFER_SIZE];
         Pin pin;
     } buffer;
     buffer.pin   = pin;
-    bool success = sendto(sock_fd, buffer.bytes, sizeof(pin), 0,
-                          (const struct sockaddr*)sock_addr,
+    bool success = sendto(sock_fd, buffer.bytes, sizeof(pin), 0, (const struct sockaddr*)sock_addr,
                           sizeof(*sock_addr)) == sizeof(pin);
     if (!success) {
         handle_errno("sendto");
@@ -134,8 +127,7 @@ static inline bool send_pin(int sock_fd,
     return success;
 }
 static inline bool send_not_croocked_pin(Worker worker, Pin pin) {
-    return send_pin(worker->worker_sock_fd, &worker->server_sock_addr,
-                    pin);
+    return send_pin(worker->worker_sock_fd, &worker->server_sock_addr, pin);
 }
 static inline bool receive_pin(int sock_fd, Pin* rec_pin) {
     union {
@@ -156,22 +148,17 @@ static inline bool receive_not_crooked_pin(Worker worker, Pin* rec_pin) {
 }
 static inline void sharpen_pin(Pin pin) {
     (void)pin;
-    uint32_t sleep_time =
-        (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) +
-        MIN_SLEEP_TIME;
+    uint32_t sleep_time = (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) + MIN_SLEEP_TIME;
     sleep(sleep_time);
 }
 static inline bool send_sharpened_pin(Worker worker, Pin pin) {
-    return send_pin(worker->worker_sock_fd, &worker->server_sock_addr,
-                    pin);
+    return send_pin(worker->worker_sock_fd, &worker->server_sock_addr, pin);
 }
 static inline bool receive_sharpened_pin(Worker worker, Pin* rec_pin) {
     return receive_pin(worker->worker_sock_fd, rec_pin);
 }
 static inline bool check_sharpened_pin_quality(Pin sharpened_pin) {
-    uint32_t sleep_time =
-        (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) +
-        MIN_SLEEP_TIME;
+    uint32_t sleep_time = (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) + MIN_SLEEP_TIME;
     sleep(sleep_time);
     return cos(sharpened_pin.pin_id) >= 0;
 }

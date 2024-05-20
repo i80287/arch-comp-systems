@@ -5,18 +5,18 @@
 #define _XOPEN_SOURCE 700
 #endif
 
-#include <assert.h>   // for assert
-#include <errno.h>    // for errno, EAGAIN, ECONNABORTED, ECON...
-#include <pthread.h>  // for pthread_create, pthread_join, pth...
-#include <signal.h>   // for size_t, signal, SIGABRT, SIGINT
-#include <stdbool.h>  // for bool, false, true
-#include <stdint.h>   // for uintptr_t, int32_t, uint16_t, uin...
-#include <stdio.h>    // for fprintf, perror, printf, stderr
-#include <stdlib.h>   // for EXIT_FAILURE, EXIT_SUCCESS
-#include <string.h>   // for strerror
+#include <assert.h>      // for assert
+#include <errno.h>       // for errno, EAGAIN, ECONNABORTED, ECON...
+#include <pthread.h>     // for pthread_create, pthread_join, pth...
+#include <signal.h>      // for size_t, signal, SIGABRT, SIGINT
+#include <stdbool.h>     // for bool, false, true
+#include <stdint.h>      // for uintptr_t, int32_t, uint16_t, uin...
+#include <stdio.h>       // for fprintf, perror, printf, stderr
+#include <stdlib.h>      // for EXIT_FAILURE, EXIT_SUCCESS
+#include <string.h>      // for strerror
 #include <sys/socket.h>  // for MSG_DONTWAIT, getsockopt, recv, send, SOL_SOCKET, SO_ERROR
-#include <time.h>    // for nanosleep
-#include <unistd.h>  // for close, sleep, ssize_t
+#include <time.h>        // for nanosleep
+#include <unistd.h>      // for close, sleep, ssize_t
 
 #include "../util/config.h"  // for MAX_SLEEP_TIME
 #include "../util/parser.h"  // for parse_args_server, print_invalid_...
@@ -41,8 +41,7 @@ static void setup_signal_handler() {
     const int handled_signals[] = {
         SIGABRT, SIGINT, SIGTERM, SIGSEGV, SIGQUIT, SIGKILL,
     };
-    for (size_t i = 0;
-         i < sizeof(handled_signals) / sizeof(handled_signals[0]); i++) {
+    for (size_t i = 0; i < sizeof(handled_signals) / sizeof(handled_signals[0]); i++) {
         signal(handled_signals[i], signal_handler);
     }
 }
@@ -75,10 +74,9 @@ static HandleResult handle_nonblocking_error(const char* cause) {
 static bool is_socket_alive(int sock_fd) {
     int error     = 0;
     socklen_t len = sizeof(error);
-    int retval = getsockopt(sock_fd, SOL_SOCKET, SO_ERROR, &error, &len);
+    int retval    = getsockopt(sock_fd, SOL_SOCKET, SO_ERROR, &error, &len);
     if (retval != 0) {
-        fprintf(stderr, "> Error getting socket error code: %s\n",
-                strerror(retval));
+        fprintf(stderr, "> Error getting socket error code: %s\n", strerror(retval));
         return false;
     }
     if (error != 0) {
@@ -88,13 +86,11 @@ static bool is_socket_alive(int sock_fd) {
     return true;
 }
 
-static bool poll_workers(int workers_fds[],
-                         const WorkerMetainfo workers_info[],
-                         volatile size_t* current_workers_online,
-                         size_t max_number_of_workers, PinsQueue pins_q) {
+static bool poll_workers(int workers_fds[], const WorkerMetainfo workers_info[],
+                         volatile size_t* current_workers_online, size_t max_number_of_workers,
+                         PinsQueue pins_q) {
     for (size_t i = 0;
-         i < max_number_of_workers && *current_workers_online > 0 &&
-         !pins_queue_full(pins_q);
+         i < max_number_of_workers && *current_workers_online > 0 && !pins_queue_full(pins_q);
          i++) {
         int worker_fd = workers_fds[i];
         if (worker_fd == -1) {
@@ -110,9 +106,8 @@ static bool poll_workers(int workers_fds[],
         union {
             char bytes[NET_BUFFER_SIZE];
             Pin pin;
-        } buffer = {0};
-        const ssize_t read_size =
-            recv(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
+        } buffer                = {0};
+        const ssize_t read_size = recv(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
         if (read_size != sizeof(Pin)) {
             switch (handle_nonblocking_error("recv")) {
                 case EMPTY_WORKER_SOCKET:
@@ -132,8 +127,7 @@ static bool poll_workers(int workers_fds[],
         printf(
             "> Received pin[pin_id=%d] from the "
             "worker[address=%s:%s | %s:%s]\n",
-            buffer.pin.pin_id, info->host, info->port, info->numeric_host,
-            info->numeric_port);
+            buffer.pin.pin_id, info->host, info->port, info->numeric_host, info->numeric_port);
         bool res = pins_queue_try_put(pins_q, buffer.pin);
         assert(res);
     }
@@ -141,14 +135,11 @@ static bool poll_workers(int workers_fds[],
     return true;
 }
 
-static bool send_pins_to_workers(int workers_fds[],
-                                 const WorkerMetainfo workers_info[],
+static bool send_pins_to_workers(int workers_fds[], const WorkerMetainfo workers_info[],
                                  volatile size_t* current_workers_online,
-                                 size_t max_number_of_workers,
-                                 PinsQueue pins_q) {
+                                 size_t max_number_of_workers, PinsQueue pins_q) {
     for (size_t i = 0;
-         i < max_number_of_workers && *current_workers_online > 0 &&
-         !pins_queue_empty(pins_q);
+         i < max_number_of_workers && *current_workers_online > 0 && !pins_queue_empty(pins_q);
          i++) {
         int worker_fd = workers_fds[i];
         if (worker_fd == -1) {
@@ -171,8 +162,7 @@ static bool send_pins_to_workers(int workers_fds[],
         assert(res);
         buffer.pin = pin;
 
-        const ssize_t sent_size =
-            send(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
+        const ssize_t sent_size = send(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
         if (sent_size != sizeof(Pin)) {
             switch (handle_nonblocking_error("send")) {
                 case EMPTY_WORKER_SOCKET:
@@ -192,16 +182,14 @@ static bool send_pins_to_workers(int workers_fds[],
         printf(
             "> Send pin[pid_id=%d] to the "
             "worker[address=%s:%s | %s:%s]\n",
-            buffer.pin.pin_id, info->host, info->port, info->numeric_host,
-            info->numeric_port);
+            buffer.pin.pin_id, info->host, info->port, info->numeric_host, info->numeric_port);
     }
 
     return true;
 }
 
 static bool poll_workers_on_the_first_stage(PinsQueue pins_1_to_2) {
-    if (server.first_workers_arr_size == 0 ||
-        pins_queue_full(pins_1_to_2)) {
+    if (server.first_workers_arr_size == 0 || pins_queue_full(pins_1_to_2)) {
         return true;
     }
 
@@ -211,8 +199,7 @@ static bool poll_workers_on_the_first_stage(PinsQueue pins_1_to_2) {
     }
     bool res =
         poll_workers(server.first_workers_fds, server.first_workers_info,
-                     &server.first_workers_arr_size,
-                     MAX_NUMBER_OF_FIRST_WORKERS, pins_1_to_2);
+                     &server.first_workers_arr_size, MAX_NUMBER_OF_FIRST_WORKERS, pins_1_to_2);
     if (!server_unlock_first_mutex(&server)) {
         return false;
     }
@@ -221,8 +208,7 @@ static bool poll_workers_on_the_first_stage(PinsQueue pins_1_to_2) {
     return res;
 }
 
-static bool poll_workers_on_the_second_stage(PinsQueue pins_1_to_2,
-                                             PinsQueue pins_2_to_3) {
+static bool poll_workers_on_the_second_stage(PinsQueue pins_1_to_2, PinsQueue pins_2_to_3) {
     if (server.second_workers_arr_size == 0 ||
         (pins_queue_full(pins_1_to_2) && pins_queue_empty(pins_2_to_3))) {
         return true;
@@ -232,14 +218,12 @@ static bool poll_workers_on_the_second_stage(PinsQueue pins_1_to_2,
     if (!server_lock_second_mutex(&server)) {
         return false;
     }
-    bool res = send_pins_to_workers(
-        server.second_workers_fds, server.second_workers_info,
-        &server.second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS,
-        pins_1_to_2);
+    bool res = send_pins_to_workers(server.second_workers_fds, server.second_workers_info,
+                                    &server.second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS,
+                                    pins_1_to_2);
     if (res) {
         poll_workers(server.second_workers_fds, server.second_workers_info,
-                     &server.second_workers_arr_size,
-                     MAX_NUMBER_OF_SECOND_WORKERS, pins_2_to_3);
+                     &server.second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS, pins_2_to_3);
     }
     if (!server_unlock_second_mutex(&server)) {
         return false;
@@ -250,8 +234,7 @@ static bool poll_workers_on_the_second_stage(PinsQueue pins_1_to_2,
 }
 
 static bool poll_workers_on_the_third_stage(PinsQueue pins_2_to_3) {
-    if (server.third_workers_arr_size == 0 ||
-        pins_queue_empty(pins_2_to_3)) {
+    if (server.third_workers_arr_size == 0 || pins_queue_empty(pins_2_to_3)) {
         return true;
     }
 
@@ -259,10 +242,9 @@ static bool poll_workers_on_the_third_stage(PinsQueue pins_2_to_3) {
     if (!server_lock_third_mutex(&server)) {
         return false;
     }
-    bool res = send_pins_to_workers(
-        server.third_workers_fds, server.third_workers_info,
-        &server.third_workers_arr_size, MAX_NUMBER_OF_THIRD_WORKERS,
-        pins_2_to_3);
+    bool res = send_pins_to_workers(server.third_workers_fds, server.third_workers_info,
+                                    &server.third_workers_arr_size, MAX_NUMBER_OF_THIRD_WORKERS,
+                                    pins_2_to_3);
     if (!server_unlock_third_mutex(&server)) {
         return false;
     }
@@ -282,18 +264,15 @@ static void* workers_poller(void* unused) {
     PinsQueue pins_2_to_3 = {0};
     while (is_poller_running) {
         if (!poll_workers_on_the_first_stage(pins_1_to_2)) {
-            fprintf(stderr,
-                    "> Could not poll workers on the first stage\n");
+            fprintf(stderr, "> Could not poll workers on the first stage\n");
             break;
         }
         if (!poll_workers_on_the_second_stage(pins_1_to_2, pins_2_to_3)) {
-            fprintf(stderr,
-                    "> Could not poll workers on the second stage\n");
+            fprintf(stderr, "> Could not poll workers on the second stage\n");
             break;
         }
         if (!poll_workers_on_the_third_stage(pins_2_to_3)) {
-            fprintf(stderr,
-                    "> Could not poll workers on the third stage\n");
+            fprintf(stderr, "> Could not poll workers on the third stage\n");
             break;
         }
         if (nanosleep(&sleep_time, NULL) == -1) {
@@ -311,7 +290,7 @@ static void* workers_poller(void* unused) {
 
 static int start_runtime_loop() {
     pthread_t poll_thread = 0;
-    int ret = pthread_create(&poll_thread, NULL, &workers_poller, NULL);
+    int ret               = pthread_create(&poll_thread, NULL, &workers_poller, NULL);
     if (ret != 0) {
         errno = ret;
         perror("pthread_create");

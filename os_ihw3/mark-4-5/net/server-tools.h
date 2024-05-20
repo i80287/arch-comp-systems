@@ -9,12 +9,12 @@
 
 #include <errno.h>       // for errno
 #include <netinet/in.h>  // for sockaddr_in
-#include <pthread.h>  // for pthread_mutex_t, pthread_mutex_lock, pthre...
-#include <stdatomic.h>  // for atomic_int
-#include <stdbool.h>    // for bool
-#include <stdint.h>     // for uint16_t
-#include <stdio.h>      // for size_t, perror
-#include <stdlib.h>     // for rand
+#include <pthread.h>     // for pthread_mutex_t, pthread_mutex_lock, pthre...
+#include <stdatomic.h>   // for atomic_int
+#include <stdbool.h>     // for bool
+#include <stdint.h>      // for uint16_t
+#include <stdio.h>       // for size_t, perror
+#include <stdlib.h>      // for rand
 
 #include "worker-tools.h"  // for WorkerType
 
@@ -23,9 +23,8 @@ enum {
     MAX_NUMBER_OF_SECOND_WORKERS = 5,
     MAX_NUMBER_OF_THIRD_WORKERS  = 2,
 
-    MAX_WORKERS_PER_SERVER = MAX_NUMBER_OF_FIRST_WORKERS +
-                             MAX_NUMBER_OF_SECOND_WORKERS +
-                             MAX_NUMBER_OF_THIRD_WORKERS,
+    MAX_WORKERS_PER_SERVER =
+        MAX_NUMBER_OF_FIRST_WORKERS + MAX_NUMBER_OF_SECOND_WORKERS + MAX_NUMBER_OF_THIRD_WORKERS,
     MAX_CONNECTIONS_PER_SERVER = MAX_WORKERS_PER_SERVER,
 };
 
@@ -49,8 +48,7 @@ typedef struct Server {
     pthread_mutex_t second_workers_mutex;
     struct sockaddr_in second_workers_addrs[MAX_NUMBER_OF_SECOND_WORKERS];
     int second_workers_fds[MAX_NUMBER_OF_SECOND_WORKERS];
-    struct WorkerMetainfo
-        second_workers_info[MAX_NUMBER_OF_SECOND_WORKERS];
+    struct WorkerMetainfo second_workers_info[MAX_NUMBER_OF_SECOND_WORKERS];
     volatile size_t second_workers_arr_size;
 
     pthread_mutex_t third_workers_mutex;
@@ -63,10 +61,8 @@ typedef struct Server {
 bool init_server(Server server, uint16_t server_port);
 void deinit_server(Server server);
 
-bool server_accept_worker(Server server, WorkerType* type,
-                          size_t* insert_index);
-void send_shutdown_signal_to_one(const Server server, WorkerType type,
-                                 size_t index);
+bool server_accept_worker(Server server, WorkerType* type, size_t* insert_index);
+void send_shutdown_signal_to_one(const Server server, WorkerType type, size_t index);
 void send_shutdown_signal_to_first_workers(Server server);
 void send_shutdown_signal_to_second_workers(Server server);
 void send_shutdown_signal_to_third_workers(Server server);
