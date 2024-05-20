@@ -6,8 +6,10 @@ TabWidth: 4
 AccessModifierOffset: -4
 AlignConsecutiveMacros: true
 AllowShortIfStatementsOnASingleLine: Never
-ColumnLimit: 80
+SortIncludes: CaseInsensitive
+ColumnLimit: 100
 BraceWrapping:
     BeforeElse: true
 AlignConsecutiveAssignments: true
+InsertNewlineAtEOF: true
 AllowShortFunctionsOnASingleLine: Empty
