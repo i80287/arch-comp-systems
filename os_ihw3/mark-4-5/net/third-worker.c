@@ -27,7 +27,7 @@ static void log_sharpened_pin_quality_check(Pin pin, bool is_ok) {
 
 static int start_runtime_loop(Worker worker) {
     int ret = EXIT_SUCCESS;
-    for (bool is_running = true; is_running;) {
+    while (!worker_should_stop(worker)) {
         Pin pin;
         if (!receive_sharpened_pin(worker, &pin)) {
             ret = EXIT_FAILURE;
@@ -37,6 +37,10 @@ static int start_runtime_loop(Worker worker) {
 
         bool is_ok = check_sharpened_pin_quality(pin);
         log_sharpened_pin_quality_check(pin, is_ok);
+    }
+
+    if (ret == EXIT_SUCCESS) {
+        worker_handle_shutdown_signal();
     }
 
     printf("Third worker is stopping...\n");

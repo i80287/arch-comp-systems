@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "net_config.h"
 #include "pin.h"
@@ -37,4 +38,10 @@ void print_sock_addr_info(const struct sockaddr* address,
 static inline void print_worker_info(Worker worker) {
     print_sock_addr_info((const struct sockaddr*)&worker->server_sock_addr,
                          sizeof(worker->server_sock_addr));
+}
+
+bool worker_should_stop(const Worker worker);
+
+static inline void worker_handle_shutdown_signal() {
+    printf("Received shutdown signal from the server\n");
 }

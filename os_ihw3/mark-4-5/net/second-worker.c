@@ -35,7 +35,7 @@ static void log_sent_pin(Pin pin) {
 
 static int start_runtime_loop(Worker worker) {
     int ret = EXIT_SUCCESS;
-    for (bool is_running = true; is_running;) {
+    while (!worker_should_stop(worker)) {
         Pin pin;
         if (!receive_not_crooked_pin(worker, &pin)) {
             ret = EXIT_FAILURE;
@@ -46,11 +46,18 @@ static int start_runtime_loop(Worker worker) {
         sharpen_pin(pin);
         log_sharpened_pin(pin);
 
+        if (worker_should_stop(worker)) {
+            break;
+        }
         if (!send_sharpened_pin(worker, pin)) {
             ret = EXIT_FAILURE;
             break;
         }
         log_sent_pin(pin);
+    }
+
+    if (ret == EXIT_SUCCESS) {
+        worker_handle_shutdown_signal();
     }
 
     printf("Second worker is stopping...\n");

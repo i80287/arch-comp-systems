@@ -1,6 +1,7 @@
 #include "worker.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdint.h>
@@ -108,4 +109,20 @@ void print_sock_addr_info(const struct sockaddr* socket_address,
         printf("Socket address: %s\nSocket port: %s\n", host_name,
                port_str);
     }
+}
+
+bool worker_should_stop(const Worker worker) {
+    char buffer[NET_BUFFER_SIZE] = {0};
+    ssize_t bytes_read           = recv(worker->worker_sock_fd, buffer,
+                                        sizeof(buffer), MSG_DONTWAIT | MSG_PEEK);
+    if (bytes_read < 0) {
+        const int errno_val = errno;
+        if (errno_val == EAGAIN || errno_val == EWOULDBLOCK) {
+            return false;
+        }
+        perror("recv");
+        return true;
+    }
+
+    return is_shutdown_message(buffer, (size_t)bytes_read);
 }

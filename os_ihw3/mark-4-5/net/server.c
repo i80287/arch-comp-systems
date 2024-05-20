@@ -4,11 +4,14 @@
 #include <assert.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include "../util/config.h"
 
 static bool setup_server(int server_sock_fd,
                          struct sockaddr_in* server_sock_addr,
@@ -124,7 +127,8 @@ static void fill_worker_metainfo(WorkerMetainfo* info,
                               sizeof(info->host_name), info->port,
                               sizeof(info->port), 0);
     if (gai_err != 0) {
-        fprintf(stderr, "> Could not fetch info about socket address: %s\n",
+        fprintf(stderr,
+                "> Could not fetch info about socket address: %s\n",
                 gai_strerror(gai_err));
         strcpy(info->host_name, "unknown host");
         strcpy(info->port, "unknown port");
@@ -164,6 +168,25 @@ static bool handle_new_worker(Server server,
                               WorkerType* type, size_t* insert_index) {
     if (worker_addrlen != sizeof(struct sockaddr_in)) {
         fprintf(stderr, "> Unknown worker of size %u\n", worker_addrlen);
+        return false;
+    }
+
+    // Enable sending of keep-alive messages
+    // on connection-oriented sockets.
+    uint32_t val = 1;
+    if (setsockopt(worker_sock_fd, SOL_SOCKET, SO_KEEPALIVE, &val,
+                   sizeof(val)) == -1) {
+        perror("setsockopt");
+        return false;
+    }
+
+    // The time (in seconds) the connection needs to remain idle
+    // before TCP starts sending keepalive probes, if the socket
+    // option SO_KEEPALIVE has been set on this socket.
+    val = MAX_SLEEP_TIME;
+    if (setsockopt(worker_sock_fd, IPPROTO_TCP, TCP_KEEPIDLE, &val,
+                   sizeof(val)) == -1) {
+        perror("setsockopt");
         return false;
     }
 
@@ -237,10 +260,27 @@ static bool handle_new_worker(Server server,
         return false;
     }
 
-    printf("> Accepted new worker with type \"%s worker\"(address=%s:%s)\n",
-           worker_type_str, info_array[*insert_index].host_name,
-           info_array[*insert_index].port);
+    printf(
+        "> Accepted new worker with type \"%s worker\"(address=%s:%s)\n",
+        worker_type_str, info_array[*insert_index].host_name,
+        info_array[*insert_index].port);
     return true;
+}
+
+void send_shutdown_signal(int sock_fd, const WorkerMetainfo* info) {
+    const char* host_name = info ? info->host_name : "unknown host";
+    const char* port      = info ? info->port : "unknown port";
+    if (send(sock_fd, SHUTDOWN_MESSAGE, SHUTDOWN_MESSAGE_SIZE, 0) !=
+        SHUTDOWN_MESSAGE_SIZE) {
+        perror("send");
+        fprintf(stderr,
+                "> Could not send shutdown signal to the "
+                "worker[address=%s:%s]\n",
+                host_name, port);
+    } else {
+        printf("> Sent shutdown signal to the worker[address=%s:%s]\n",
+               host_name, port);
+    }
 }
 
 bool server_accept_worker(Server server, WorkerType* type,
@@ -257,6 +297,7 @@ bool server_accept_worker(Server server, WorkerType* type,
     }
     if (!handle_new_worker(server, &storage, worker_addrlen,
                            worker_sock_fd, type, insert_index)) {
+        send_shutdown_signal(worker_sock_fd, NULL);
         close(worker_sock_fd);
         return false;
     }

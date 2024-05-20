@@ -63,6 +63,8 @@ bool init_server(Server server, uint16_t server_port);
 
 void deinit_server(Server server);
 
+void send_shutdown_signal(int sock_fd, const WorkerMetainfo* info);
+
 bool server_accept_worker(Server server, WorkerType* type,
                           size_t* insert_index);
 

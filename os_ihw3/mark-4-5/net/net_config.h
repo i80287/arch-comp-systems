@@ -6,7 +6,7 @@
 
 #include "pin.h"
 
-static const char SHUTDOWN_MESSAGE[] = "\0\0\0\0\0\0\0";
+static const char SHUTDOWN_MESSAGE[] = "0x00000";
 enum {
     SHUTDOWN_MESSAGE_SIZE = sizeof(SHUTDOWN_MESSAGE),
 };

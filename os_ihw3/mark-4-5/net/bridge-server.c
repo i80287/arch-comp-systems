@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "../util/parser.h"
+#include "../util/config.h"
 #include "server.h"
 
 /// @brief We use global variables so it can be accessed through
@@ -41,11 +42,12 @@ static void setup_signal_handler() {
 }
 
 static bool check_socket(int sock_fd) {
-    int error = 0;
-    socklen_t len = sizeof (error);
+    int error     = 0;
+    socklen_t len = sizeof(error);
     int retval = getsockopt(sock_fd, SOL_SOCKET, SO_ERROR, &error, &len);
     if (retval != 0) {
-        fprintf(stderr, "> Error getting socket error code: %s\n", strerror(retval));
+        fprintf(stderr, "> Error getting socket error code: %s\n",
+                strerror(retval));
         return false;
     }
     if (error != 0) {
@@ -55,9 +57,9 @@ static bool check_socket(int sock_fd) {
     return true;
 }
 
-static bool poll_workers(const int workers_fds[],
+static bool poll_workers(int workers_fds[],
                          const WorkerMetainfo workers_info[],
-                         const volatile size_t* current_workers_online,
+                         volatile size_t* current_workers_online,
                          size_t max_number_of_workers, PinsQueue pins_q) {
     for (size_t i = 0;
          i < max_number_of_workers && *current_workers_online > 0 &&
@@ -65,6 +67,12 @@ static bool poll_workers(const int workers_fds[],
          i++) {
         int worker_fd = workers_fds[i];
         if (worker_fd == -1) {
+            continue;
+        }
+        if (!check_socket(worker_fd)) {
+            workers_fds[i] = -1;
+            close(worker_fd);
+            (*current_workers_online)--;
             continue;
         }
 
@@ -96,10 +104,11 @@ static bool poll_workers(const int workers_fds[],
     return true;
 }
 
-static bool send_pins_to_workers(
-    int workers_fds[], const WorkerMetainfo workers_info[],
-    volatile size_t* current_workers_online,
-    size_t max_number_of_workers, PinsQueue pins_q) {
+static bool send_pins_to_workers(int workers_fds[],
+                                 const WorkerMetainfo workers_info[],
+                                 volatile size_t* current_workers_online,
+                                 size_t max_number_of_workers,
+                                 PinsQueue pins_q) {
     for (size_t i = 0;
          i < max_number_of_workers && *current_workers_online > 0 &&
          !pins_queue_empty(pins_q);
@@ -110,9 +119,9 @@ static bool send_pins_to_workers(
         }
 
         if (!check_socket(worker_fd)) {
-            close(worker_fd);
             workers_fds[i] = -1;
-            current_workers_online--;
+            close(worker_fd);
+            (*current_workers_online)--;
             continue;
         }
 
@@ -125,7 +134,8 @@ static bool send_pins_to_workers(
         assert(res);
         buffer.pin = pin;
 
-        ssize_t sent_size = send(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
+        ssize_t sent_size =
+            send(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
 
         if (sent_size != sizeof(Pin)) {
             switch (errno) {
@@ -164,7 +174,7 @@ static bool poll_workers_on_the_first_stage(PinsQueue pins_1_to_2) {
     if (!server_unlock_first_mutex(&server)) {
         return false;
     }
-    printf("> Ended polling workers on the first stage\n");
+    // printf("> Ended polling workers on the first stage\n");
 
     return res;
 }
@@ -253,50 +263,34 @@ static void* workers_poller(void* unused) {
     return (void*)(uintptr_t)(uint32_t)ret;
 }
 
-static void send_shutdown_signal(int sock_fd, const WorkerMetainfo* info) {
-    if (send(sock_fd, SHUTDOWN_MESSAGE, SHUTDOWN_MESSAGE_SIZE, 0) !=
-        SHUTDOWN_MESSAGE_SIZE) {
-        perror("send");
-        fprintf(stderr,
-                "> Could not send shutdown signal to the "
-                "worker[address=%s:%s]\n",
-                info->host_name, info->port);
-    } else {
-        printf("> Sent shutdown signal to the worker[address=%s:%s]\n",
-               info->host_name, info->port);
-    }
-}
-
-static void send_shutdown_signal_and_close_all(
+static void send_shutdown_signal_to_all(
     int sock_fds[], const WorkerMetainfo workers_info[],
     size_t max_array_size) {
     for (size_t i = 0; i < max_array_size; i++) {
         int sock_fd = sock_fds[i];
         if (sock_fd != -1) {
             send_shutdown_signal(sock_fd, &workers_info[i]);
-            close(sock_fd);
-            sock_fds[i] = -1;
         }
     }
 }
 
 static void send_shutdown_signals() {
     if (server_lock_first_mutex(&server)) {
-        send_shutdown_signal_and_close_all(server.first_workers_fds,
+        send_shutdown_signal_to_all(server.first_workers_fds,
                                            server.first_workers_info,
                                            MAX_NUMBER_OF_FIRST_WORKERS);
         server.first_workers_arr_size = 0;
         server_unlock_first_mutex(&server);
     }
     if (server_lock_second_mutex(&server)) {
-        send_shutdown_signal_and_close_all(server.second_workers_fds,
+        send_shutdown_signal_to_all(server.second_workers_fds,
                                            server.second_workers_info,
                                            MAX_NUMBER_OF_SECOND_WORKERS);
         server.second_workers_arr_size = 0;
         server_unlock_second_mutex(&server);
     }
     if (server_lock_third_mutex(&server)) {
-        send_shutdown_signal_and_close_all(server.third_workers_fds,
+        send_shutdown_signal_to_all(server.third_workers_fds,
                                            server.third_workers_info,
                                            MAX_NUMBER_OF_THIRD_WORKERS);
         server.third_workers_arr_size = 0;
@@ -322,6 +316,8 @@ static int start_runtime_loop() {
     void* poll_ret = NULL;
     pthread_join(poll_thread, &poll_ret);
     send_shutdown_signals();
+    printf("> Sent shutdown signals to all clients");
+    sleep(MAX_SLEEP_TIME);
     return (int)(uintptr_t)poll_ret;
 }
 

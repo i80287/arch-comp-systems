@@ -36,7 +36,7 @@ static void log_sent_pin(Pin pin) {
 
 static int start_runtime_loop(Worker worker) {
     int ret = EXIT_SUCCESS;
-    for (bool is_running = true; is_running;) {
+    while (!worker_should_stop(worker)) {
         const Pin pin = receive_new_pin();
         log_received_pin(pin);
         bool is_ok = check_pin_crookness(pin);
@@ -45,12 +45,18 @@ static int start_runtime_loop(Worker worker) {
             continue;
         }
 
+        if (worker_should_stop(worker)) {
+            break;
+        }
         if (!send_not_croocked_pin(worker, pin)) {
-            is_running = false;
             ret        = EXIT_FAILURE;
             break;
         }
         log_sent_pin(pin);
+    }
+
+    if (ret == EXIT_SUCCESS) {
+        worker_handle_shutdown_signal();
     }
 
     printf("First worker is stopping...\n");
