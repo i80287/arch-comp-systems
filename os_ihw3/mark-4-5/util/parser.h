@@ -2,8 +2,6 @@
 
 #include <stdint.h>
 
-#include "../net/server.h"
-
 typedef enum ParseStatus {
     PARSE_SUCCESS,
     PARSE_INVALID_ARGC,

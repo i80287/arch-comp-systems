@@ -12,14 +12,27 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include "net_config.h"
+#include "net-config.h"
 #include "pin.h"
 
 typedef enum WorkerType {
-    FIRST_STAGE_WORKER,
-    SECOND_STAGE_WORKER,
-    THIRD_STAGE_WORKER,
+    FIRST_STAGE_WORKER  = 1,
+    SECOND_STAGE_WORKER = 2,
+    THIRD_STAGE_WORKER  = 3,
 } WorkerType;
+
+static inline const char* worker_type_to_string(WorkerType type) {
+    switch (type) {
+        case FIRST_STAGE_WORKER:
+            return "first stage worker";
+        case SECOND_STAGE_WORKER:
+            return "second stage worker";
+        case THIRD_STAGE_WORKER:
+            return "third stage worker";
+        default:
+            return "unknown stage worker";
+    }
+}
 
 typedef struct Worker {
     int worker_sock_fd;

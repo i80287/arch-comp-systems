@@ -4,10 +4,14 @@
 #include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include "../util/config.h"
+#include "net-config.h"
 
 static bool send_worker_type_info(int socket_fd,
                                   struct sockaddr_in* server_sock_addr,
@@ -41,6 +45,25 @@ static bool connect_to_server(int socket_fd,
                 sizeof(*server_sock_addr)) == -1;
     if (failed) {
         perror("connect");
+        return false;
+    }
+
+    // Enable sending of keep-alive messages
+    // on connection-oriented sockets.
+    uint32_t val = 1;
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_KEEPALIVE, &val,
+                   sizeof(val)) == -1) {
+        perror("setsockopt");
+        return false;
+    }
+
+    // The time (in seconds) the connection needs to remain idle
+    // before TCP starts sending keepalive probes, if the socket
+    // option SO_KEEPALIVE has been set on this socket.
+    val = MAX_SLEEP_TIME;
+    if (setsockopt(socket_fd, IPPROTO_TCP, TCP_KEEPIDLE, &val,
+                   sizeof(val)) == -1) {
+        perror("setsockopt");
         return false;
     }
 
@@ -88,10 +111,9 @@ void print_sock_addr_info(const struct sockaddr* socket_address,
                           const socklen_t socket_address_size) {
     char host_name[1024] = {0};
     char port_str[16]    = {0};
-    int gai_err =
-        getnameinfo(socket_address, socket_address_size, host_name,
-                    sizeof(host_name), port_str, sizeof(port_str),
-                    NI_NUMERICHOST | NI_NUMERICSERV | NI_DGRAM);
+    int gai_err          = getnameinfo(
+        socket_address, socket_address_size, host_name, sizeof(host_name),
+        port_str, sizeof(port_str), NI_NUMERICHOST | NI_NUMERICSERV);
     if (gai_err == 0) {
         printf(
             "Numeric socket address: %s\n"
@@ -102,9 +124,9 @@ void print_sock_addr_info(const struct sockaddr* socket_address,
                 gai_strerror(gai_err));
     }
 
-    gai_err = getnameinfo(socket_address, socket_address_size, host_name,
-                          sizeof(host_name), port_str, sizeof(port_str),
-                          NI_DGRAM);
+    gai_err =
+        getnameinfo(socket_address, socket_address_size, host_name,
+                    sizeof(host_name), port_str, sizeof(port_str), 0);
     if (gai_err == 0) {
         printf("Socket address: %s\nSocket port: %s\n", host_name,
                port_str);

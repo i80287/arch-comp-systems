@@ -7,19 +7,28 @@
 #include <unistd.h>
 
 #include "../util/config.h"
-#include "net_config.h"
+#include "net-config.h"
 #include "pin.h"
 #include "server.h"
 #include "worker.h"
 
 static inline void handle_errno(const char* cause) {
-    switch (errno) {
+    uint32_t errno_val = (uint32_t)(errno);
+    switch (errno_val) {
+        case EAGAIN:
+        case ENETDOWN:
+        case ENETUNREACH:
+        case ENETRESET:
         case ECONNABORTED:
         case ECONNRESET:
+        case ECONNREFUSED:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
             printf(
-                "+----------------------------+\n"
-                "| Server stopped connections |\n"
-                "+----------------------------+\n");
+                "+---------------------------------------------+\n"
+                "| Server stopped connection. Code: %-10u |\n"
+                "+---------------------------------------------+\n",
+                errno_val);
             break;
         default:
             perror(cause);

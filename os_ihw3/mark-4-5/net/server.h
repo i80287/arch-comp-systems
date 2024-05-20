@@ -15,8 +15,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "net-config.h"
 #include "pin.h"
-#include "net_config.h"
 #include "worker.h"
 
 enum {
@@ -31,8 +31,10 @@ enum {
 };
 
 typedef struct WorkerMetainfo {
-    char host_name[48];
+    char host[48];
     char port[16];
+    char numeric_host[48];
+    char numeric_port[16];
 } WorkerMetainfo;
 
 typedef struct Server {
@@ -63,7 +65,18 @@ bool init_server(Server server, uint16_t server_port);
 
 void deinit_server(Server server);
 
-void send_shutdown_signal(int sock_fd, const WorkerMetainfo* info);
+void send_shutdown_signal_to_one(const Server server, WorkerType type,
+                                 size_t index);
+
+void send_shutdown_signal_to_first_workers(Server server);
+
+void send_shutdown_signal_to_second_workers(Server server);
+
+void send_shutdown_signal_to_third_workers(Server server);
+
+void send_shutdown_signal_to_all_of_type(Server server, WorkerType type);
+
+void send_shutdown_signal_to_all(Server server);
 
 bool server_accept_worker(Server server, WorkerType* type,
                           size_t* insert_index);

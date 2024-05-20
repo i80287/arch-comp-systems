@@ -122,16 +122,27 @@ static bool receive_worker_type(int worker_sock_fd, WorkerType* type) {
 
 static void fill_worker_metainfo(WorkerMetainfo* info,
                                  const struct sockaddr_in* worker_addr) {
-    int gai_err = getnameinfo((const struct sockaddr*)worker_addr,
-                              sizeof(*worker_addr), info->host_name,
-                              sizeof(info->host_name), info->port,
-                              sizeof(info->port), 0);
+    int gai_err = getnameinfo(
+        (const struct sockaddr*)worker_addr, sizeof(*worker_addr),
+        info->host, sizeof(info->host), info->port, sizeof(info->port), 0);
     if (gai_err != 0) {
         fprintf(stderr,
                 "> Could not fetch info about socket address: %s\n",
                 gai_strerror(gai_err));
-        strcpy(info->host_name, "unknown host");
+        strcpy(info->host, "unknown host");
         strcpy(info->port, "unknown port");
+    }
+
+    gai_err = getnameinfo(
+        (const struct sockaddr*)worker_addr, sizeof(*worker_addr),
+        info->numeric_host, sizeof(info->numeric_host), info->numeric_port,
+        sizeof(info->numeric_port), NI_NUMERICSERV | NI_NUMERICHOST);
+    if (gai_err != 0) {
+        fprintf(stderr,
+                "> Could not fetch info about socket address: %s\n",
+                gai_strerror(gai_err));
+        strcpy(info->numeric_host, "unknown host");
+        strcpy(info->numeric_port, "unknown port");
     }
 }
 
@@ -199,7 +210,6 @@ static bool handle_new_worker(Server server,
         return false;
     }
 
-    const char* worker_type_str;
     const WorkerMetainfo* info_array;
     switch (*type) {
         case FIRST_STAGE_WORKER: {
@@ -214,8 +224,7 @@ static bool handle_new_worker(Server server,
             if (!server_unlock_first_mutex(server)) {
                 return false;
             }
-            worker_type_str = "first";
-            info_array      = server->first_workers_info;
+            info_array = server->first_workers_info;
         } break;
         case SECOND_STAGE_WORKER: {
             if (!server_lock_second_mutex(server)) {
@@ -229,8 +238,7 @@ static bool handle_new_worker(Server server,
             if (!server_unlock_second_mutex(server)) {
                 return false;
             }
-            worker_type_str = "second";
-            info_array      = server->second_workers_info;
+            info_array = server->second_workers_info;
         } break;
         case THIRD_STAGE_WORKER: {
             if (!server_lock_third_mutex(server)) {
@@ -244,44 +252,32 @@ static bool handle_new_worker(Server server,
             if (!server_unlock_third_mutex(server)) {
                 return false;
             }
-            worker_type_str = "third";
-            info_array      = server->third_workers_info;
+            info_array = server->third_workers_info;
         } break;
         default:
             fprintf(stderr, "> Unknown worker type: %d\n", *type);
             return false;
     }
 
+    const char* worker_type = worker_type_to_string(*type);
     if (*insert_index == (size_t)-1) {
         fprintf(stderr,
                 "> Can't accept new worker: limit for workers "
-                "of type \"%s worker\" has been reached\n",
-                worker_type_str);
+                "of type \"%s\" has been reached\n",
+                worker_type);
         return false;
     }
 
+    const WorkerMetainfo* info = &info_array[*insert_index];
     printf(
-        "> Accepted new worker with type \"%s worker\"(address=%s:%s)\n",
-        worker_type_str, info_array[*insert_index].host_name,
-        info_array[*insert_index].port);
+        "> Accepted new worker with type \"%s\"(address=%s:%s | %s:%s)\n",
+        worker_type, info->host, info->port, info->numeric_host,
+        info->numeric_port);
     return true;
 }
 
-void send_shutdown_signal(int sock_fd, const WorkerMetainfo* info) {
-    const char* host_name = info ? info->host_name : "unknown host";
-    const char* port      = info ? info->port : "unknown port";
-    if (send(sock_fd, SHUTDOWN_MESSAGE, SHUTDOWN_MESSAGE_SIZE, 0) !=
-        SHUTDOWN_MESSAGE_SIZE) {
-        perror("send");
-        fprintf(stderr,
-                "> Could not send shutdown signal to the "
-                "worker[address=%s:%s]\n",
-                host_name, port);
-    } else {
-        printf("> Sent shutdown signal to the worker[address=%s:%s]\n",
-               host_name, port);
-    }
-}
+static void send_shutdown_signal_to_one_impl(int sock_fd,
+                                             const WorkerMetainfo* info);
 
 bool server_accept_worker(Server server, WorkerType* type,
                           size_t* insert_index) {
@@ -297,9 +293,128 @@ bool server_accept_worker(Server server, WorkerType* type,
     }
     if (!handle_new_worker(server, &storage, worker_addrlen,
                            worker_sock_fd, type, insert_index)) {
-        send_shutdown_signal(worker_sock_fd, NULL);
+        send_shutdown_signal_to_one_impl(worker_sock_fd, NULL);
         close(worker_sock_fd);
         return false;
     }
     return true;
+}
+
+static void send_shutdown_signal_to_one_impl(int sock_fd,
+                                             const WorkerMetainfo* info) {
+    const char* host         = info ? info->host : "unknown host";
+    const char* port         = info ? info->port : "unknown port";
+    const char* numeric_host = info ? info->numeric_host : "unknown host";
+    const char* numeric_port = info ? info->numeric_port : "unknown port";
+    if (send(sock_fd, SHUTDOWN_MESSAGE, SHUTDOWN_MESSAGE_SIZE, 0) !=
+        SHUTDOWN_MESSAGE_SIZE) {
+        perror("send");
+        fprintf(stderr,
+                "> Could not send shutdown signal to the "
+                "worker[address=%s:%s | %s:%s]\n",
+                host, port, numeric_host, numeric_port);
+    } else {
+        printf(
+            "> Sent shutdown signal to the "
+            "worker[address=%s:%s | %s:%s]\n",
+            host, port, numeric_host, numeric_port);
+        if (shutdown(sock_fd, SHUT_RDWR) == -1) {
+            perror("shutdown");
+        }
+    }
+}
+
+void send_shutdown_signal_to_one(const Server server, WorkerType type,
+                                 size_t index) {
+    const int* fds_arr;
+    const WorkerMetainfo* infos_arr;
+    switch (type) {
+        case FIRST_STAGE_WORKER:
+            assert(index < MAX_NUMBER_OF_FIRST_WORKERS);
+            fds_arr   = server->first_workers_fds;
+            infos_arr = server->first_workers_info;
+            break;
+        case SECOND_STAGE_WORKER:
+            assert(index < MAX_NUMBER_OF_SECOND_WORKERS);
+            fds_arr   = server->second_workers_fds;
+            infos_arr = server->second_workers_info;
+            break;
+        case THIRD_STAGE_WORKER:
+            assert(index < MAX_NUMBER_OF_THIRD_WORKERS);
+            fds_arr   = server->third_workers_fds;
+            infos_arr = server->third_workers_info;
+            break;
+        default:
+            return;
+    }
+
+    int sock_fd = fds_arr[index];
+    if (sock_fd == -1) {
+        return;
+    }
+
+    send_shutdown_signal_to_one_impl(sock_fd, &infos_arr[index]);
+}
+
+static void send_shutdown_signal_to_all_in_arr_impl(
+    const int sock_fds[], const WorkerMetainfo workers_info[],
+    size_t max_array_size) {
+    for (size_t i = 0; i < max_array_size; i++) {
+        int sock_fd = sock_fds[i];
+        if (sock_fd != -1) {
+            send_shutdown_signal_to_one_impl(sock_fd, &workers_info[i]);
+        }
+    }
+}
+
+void send_shutdown_signal_to_first_workers(Server server) {
+    if (server_lock_first_mutex(server)) {
+        send_shutdown_signal_to_all_in_arr_impl(
+            server->first_workers_fds, server->first_workers_info,
+            MAX_NUMBER_OF_FIRST_WORKERS);
+        server->first_workers_arr_size = 0;
+        server_unlock_first_mutex(server);
+    }
+}
+
+void send_shutdown_signal_to_second_workers(Server server) {
+    if (server_lock_second_mutex(server)) {
+        send_shutdown_signal_to_all_in_arr_impl(
+            server->second_workers_fds, server->second_workers_info,
+            MAX_NUMBER_OF_SECOND_WORKERS);
+        server->second_workers_arr_size = 0;
+        server_unlock_second_mutex(server);
+    }
+}
+
+void send_shutdown_signal_to_third_workers(Server server) {
+    if (server_lock_third_mutex(server)) {
+        send_shutdown_signal_to_all_in_arr_impl(
+            server->third_workers_fds, server->third_workers_info,
+            MAX_NUMBER_OF_THIRD_WORKERS);
+        server->third_workers_arr_size = 0;
+        server_unlock_third_mutex(server);
+    }
+}
+
+void send_shutdown_signal_to_all_of_type(Server server, WorkerType type) {
+    switch (type) {
+        case FIRST_STAGE_WORKER:
+            send_shutdown_signal_to_first_workers(server);
+            break;
+        case SECOND_STAGE_WORKER:
+            send_shutdown_signal_to_second_workers(server);
+            break;
+        case THIRD_STAGE_WORKER:
+            send_shutdown_signal_to_third_workers(server);
+            break;
+        default:
+            return;
+    }
+}
+
+void send_shutdown_signal_to_all(Server server) {
+    send_shutdown_signal_to_first_workers(server);
+    send_shutdown_signal_to_second_workers(server);
+    send_shutdown_signal_to_third_workers(server);
 }
