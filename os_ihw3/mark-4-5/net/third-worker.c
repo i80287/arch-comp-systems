@@ -1,11 +1,11 @@
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <stdbool.h>  // for bool
+#include <stdint.h>   // for uint16_t
+#include <stdio.h>    // for printf
+#include <stdlib.h>   // for EXIT_FAILURE, EXIT_SUCCESS
 
-#include "../util/parser.h"
-#include "pin-tools.h"
-#include "worker.h"
+#include "../util/parser.h"  // for parse_args_worker, print_invalid_args_er...
+#include "pin.h"             // for Pin
+#include "worker-tools.h"  // for Worker, check_sharpened_pin_quality, dei...
 
 static void log_received_pin(Pin pin) {
     printf(

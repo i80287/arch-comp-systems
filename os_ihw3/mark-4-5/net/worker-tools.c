@@ -1,17 +1,15 @@
-#include "worker.h"
-
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include "../util/config.h"
-#include "net-config.h"
+#include "worker-tools.h"
+#include <arpa/inet.h>              // for htons, inet_addr
+#include <errno.h>                  // for EAGAIN, EWOULDBLOCK, errno
+#include <netdb.h>                  // for getnameinfo, gai_strerror, NI_NUM...
+#include <netinet/in.h>             // for sockaddr_in, IPPROTO_TCP, in_addr
+#include <netinet/tcp.h>            // for TCP_KEEPIDLE
+#include <stdint.h>                 // for uint16_t, uint32_t
+#include <stdio.h>                  // for perror, printf, fprintf, stderr
+#include <sys/socket.h>             // for setsockopt, connect, recv, sendto, SOL_SOCKET, SO_KEEPALIVE
+#include <unistd.h>                 // for close, ssize_t
+#include "../util/config.h"         // for MAX_SLEEP_TIME
+#include "net-config.h"             // for NET_BUFFER_SIZE, is_shutdown_message
 
 static bool send_worker_type_info(int socket_fd,
                                   struct sockaddr_in* server_sock_addr,

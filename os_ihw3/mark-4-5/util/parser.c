@@ -1,12 +1,11 @@
 #include "parser.h"
 
-#include <arpa/inet.h>
-#include <assert.h>
-#include <errno.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <arpa/inet.h>   // for inet_pton
+#include <netinet/in.h>  // for sockaddr_in, sockaddr_in6
+#include <stdbool.h>     // for bool, true, false
+#include <stdio.h>       // for fprintf, NULL, stderr
+#include <stdlib.h>      // for strtoul
+#include <sys/socket.h>  // for AF_INET, AF_INET6
 
 static bool verify_ip(const char* ip_address, bool ip4_only) {
     struct sockaddr_in sa4;

@@ -7,17 +7,16 @@
 #define _XOPEN_SOURCE 700
 #endif
 
-#include <errno.h>
-#include <netinet/in.h>
-#include <pthread.h>
-#include <stdatomic.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <string.h>
+#include <errno.h>       // for errno
+#include <netinet/in.h>  // for sockaddr_in
+#include <pthread.h>  // for pthread_mutex_t, pthread_mutex_lock, pthre...
+#include <stdatomic.h>  // for atomic_int
+#include <stdbool.h>    // for bool
+#include <stdint.h>     // for uint16_t
+#include <stdio.h>      // for size_t, perror
+#include <stdlib.h>     // for rand
 
-#include "net-config.h"
-#include "pin.h"
-#include "worker.h"
+#include "worker-tools.h"  // for WorkerType
 
 enum {
     MAX_NUMBER_OF_FIRST_WORKERS  = 3,
@@ -62,24 +61,17 @@ typedef struct Server {
 } Server[1];
 
 bool init_server(Server server, uint16_t server_port);
-
 void deinit_server(Server server);
-
-void send_shutdown_signal_to_one(const Server server, WorkerType type,
-                                 size_t index);
-
-void send_shutdown_signal_to_first_workers(Server server);
-
-void send_shutdown_signal_to_second_workers(Server server);
-
-void send_shutdown_signal_to_third_workers(Server server);
-
-void send_shutdown_signal_to_all_of_type(Server server, WorkerType type);
-
-void send_shutdown_signal_to_all(Server server);
 
 bool server_accept_worker(Server server, WorkerType* type,
                           size_t* insert_index);
+void send_shutdown_signal_to_one(const Server server, WorkerType type,
+                                 size_t index);
+void send_shutdown_signal_to_first_workers(Server server);
+void send_shutdown_signal_to_second_workers(Server server);
+void send_shutdown_signal_to_third_workers(Server server);
+void send_shutdown_signal_to_all_of_type(Server server, WorkerType type);
+void send_shutdown_signal_to_all(Server server);
 
 static inline bool server_lock_mutex(pthread_mutex_t* mutex) {
     int err = pthread_mutex_lock(mutex);
@@ -89,7 +81,6 @@ static inline bool server_lock_mutex(pthread_mutex_t* mutex) {
     }
     return err == 0;
 }
-
 static inline bool server_unlock_mutex(pthread_mutex_t* mutex) {
     int err = pthread_mutex_unlock(mutex);
     if (err != 0) {
@@ -98,27 +89,21 @@ static inline bool server_unlock_mutex(pthread_mutex_t* mutex) {
     }
     return err == 0;
 }
-
 static inline bool server_lock_first_mutex(Server server) {
     return server_lock_mutex(&server->first_workers_mutex);
 }
-
 static inline bool server_unlock_first_mutex(Server server) {
     return server_unlock_mutex(&server->first_workers_mutex);
 }
-
 static inline bool server_lock_second_mutex(Server server) {
     return server_lock_mutex(&server->second_workers_mutex);
 }
-
 static inline bool server_unlock_second_mutex(Server server) {
     return server_unlock_mutex(&server->second_workers_mutex);
 }
-
 static inline bool server_lock_third_mutex(Server server) {
     return server_lock_mutex(&server->third_workers_mutex);
 }
-
 static inline bool server_unlock_third_mutex(Server server) {
     return server_unlock_mutex(&server->third_workers_mutex);
 }

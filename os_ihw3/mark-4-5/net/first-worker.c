@@ -1,11 +1,10 @@
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-#include "../util/parser.h"
-#include "pin-tools.h"
-#include "worker.h"
+#include <stdbool.h>         // for bool
+#include <stdint.h>          // for uint16_t
+#include <stdio.h>           // for printf
+#include <stdlib.h>          // for EXIT_FAILURE, EXIT_SUCCESS
+#include "../util/parser.h"  // for parse_args_worker, print_invalid_args_er...
+#include "pin.h"             // for Pin
+#include "worker-tools.h"    // for worker_should_stop, Worker, check_pin_cr...
 
 static void log_received_pin(Pin pin) {
     printf(
@@ -49,7 +48,7 @@ static int start_runtime_loop(Worker worker) {
             break;
         }
         if (!send_not_croocked_pin(worker, pin)) {
-            ret        = EXIT_FAILURE;
+            ret = EXIT_FAILURE;
             break;
         }
         log_sent_pin(pin);

@@ -1,10 +1,10 @@
 #pragma once
 
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
+#include <stdbool.h>  // for bool
+#include <stddef.h>   // for size_t
+#include <string.h>   // for memcmp
 
-#include "pin.h"
+#include "pin.h"  // for Pin
 
 static const char SHUTDOWN_MESSAGE[] = "0x00000";
 enum {

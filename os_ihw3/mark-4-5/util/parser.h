@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include <stdint.h> // for uint16_t
 
 typedef enum ParseStatus {
     PARSE_SUCCESS,

@@ -1,6 +1,8 @@
 #pragma once
 
-#include <assert.h>
+#include <assert.h>   // for assert
+#include <stdbool.h>  // for bool, false, true
+#include <stddef.h>   // for size_t
 
 /// @brief Pin that workers pass to each other.
 typedef struct Pin {
@@ -19,11 +21,9 @@ typedef struct PinsQueue {
 static inline bool pins_queue_empty(const PinsQueue queue) {
     return queue->queue_size == 0;
 }
-
 static inline bool pins_queue_full(const PinsQueue queue) {
     return queue->queue_size == PINS_QUEUE_MAX_SIZE;
 }
-
 static inline bool pins_queue_try_put(PinsQueue queue, Pin pin) {
     if (!pins_queue_full(queue)) {
         assert(queue->write_pos < PINS_QUEUE_MAX_SIZE);
@@ -34,7 +34,6 @@ static inline bool pins_queue_try_put(PinsQueue queue, Pin pin) {
     }
     return false;
 }
-
 static inline bool pins_queue_try_pop(PinsQueue queue, Pin* pin) {
     if (!pins_queue_empty(queue)) {
         assert(queue->read_pos < PINS_QUEUE_MAX_SIZE);

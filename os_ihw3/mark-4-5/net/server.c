@@ -1,420 +1,367 @@
-#include "server.h"
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 
-#include <arpa/inet.h>
-#include <assert.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include <assert.h>   // for assert
+#include <errno.h>    // for errno, EAGAIN, ECONNABORTED, ECON...
+#include <pthread.h>  // for pthread_create, pthread_join, pth...
+#include <signal.h>   // for size_t, signal, SIGABRT, SIGINT
+#include <stdbool.h>  // for bool, false, true
+#include <stdint.h>   // for uintptr_t, int32_t, uint16_t, uin...
+#include <stdio.h>    // for fprintf, perror, printf, stderr
+#include <stdlib.h>   // for EXIT_FAILURE, EXIT_SUCCESS
+#include <string.h>   // for strerror
+#include <sys/socket.h>  // for MSG_DONTWAIT, getsockopt, recv, send, SOL_SOCKET, SO_ERROR
+#include <time.h>    // for nanosleep
+#include <unistd.h>  // for close, sleep, ssize_t
 
-#include "../util/config.h"
+#include "../util/config.h"  // for MAX_SLEEP_TIME
+#include "../util/parser.h"  // for parse_args_server, print_invalid_...
+#include "net-config.h"      // for NET_BUFFER_SIZE
+#include "pin.h"             // for Pin, PinsQueue, pins_queue_empty
+#include "server-tools.h"    // for Server, WorkerMetainfo, MAX_NUMBE...
+#include "worker-tools.h"    // for WorkerType
 
-static bool setup_server(int server_sock_fd,
-                         struct sockaddr_in* server_sock_addr,
-                         uint16_t server_port) {
-    server_sock_addr->sin_family      = AF_INET;
-    server_sock_addr->sin_port        = htons(server_port);
-    server_sock_addr->sin_addr.s_addr = htonl(INADDR_ANY);
+/// @brief We use global variables so it can be accessed through
+//   the signal handlers and another threads of this process.
+static struct Server server              = {0};
+static volatile bool is_acceptor_running = true;
+static volatile bool is_poller_running   = true;
 
-    bool bind_failed =
-        bind(server_sock_fd, (const struct sockaddr*)server_sock_addr,
-             sizeof(*server_sock_addr)) == -1;
-    if (bind_failed) {
-        perror("bind");
+static void signal_handler(int sig) {
+    is_acceptor_running = false;
+    is_poller_running   = false;
+    fprintf(stderr, "> Received signal %d\n", sig);
+}
+
+static void setup_signal_handler() {
+    const int handled_signals[] = {
+        SIGABRT, SIGINT, SIGTERM, SIGSEGV, SIGQUIT, SIGKILL,
+    };
+    for (size_t i = 0;
+         i < sizeof(handled_signals) / sizeof(handled_signals[0]); i++) {
+        signal(handled_signals[i], signal_handler);
+    }
+}
+
+typedef enum HandleResult {
+    EMPTY_WORKER_SOCKET,
+    DEAD_WORKER_SOCKET,
+    UNKNOWN_SOCKET_ERROR,
+} HandleResult;
+
+static HandleResult handle_nonblocking_error(const char* cause) {
+    switch (errno) {
+        case EAGAIN:
+            return EMPTY_WORKER_SOCKET;
+        case ENETDOWN:
+        case ENETUNREACH:
+        case ENETRESET:
+        case ECONNABORTED:
+        case ECONNRESET:
+        case ECONNREFUSED:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
+            return DEAD_WORKER_SOCKET;
+        default:
+            perror(cause);
+            return UNKNOWN_SOCKET_ERROR;
+    }
+}
+
+static bool is_socket_alive(int sock_fd) {
+    int error     = 0;
+    socklen_t len = sizeof(error);
+    int retval = getsockopt(sock_fd, SOL_SOCKET, SO_ERROR, &error, &len);
+    if (retval != 0) {
+        fprintf(stderr, "> Error getting socket error code: %s\n",
+                strerror(retval));
         return false;
     }
-
-    bool listen_failed =
-        listen(server_sock_fd, MAX_CONNECTIONS_PER_SERVER) == -1;
-    if (listen_failed) {
-        perror("listen");
+    if (error != 0) {
+        fprintf(stderr, "> Socket error: %s\n", strerror(error));
         return false;
     }
-
     return true;
 }
 
-bool init_server(Server server, uint16_t server_port) {
-    memset(server, 0, sizeof(*server));
-    if (pthread_mutex_init(&server->first_workers_mutex, NULL) != 0) {
-        goto init_server_cleanup_empty;
-    }
-    if (pthread_mutex_init(&server->second_workers_mutex, NULL) != 0) {
-        goto init_server_cleanup_mutex_1;
-    }
-    if (pthread_mutex_init(&server->third_workers_mutex, NULL) != 0) {
-        goto init_server_cleanup_mutex_2;
-    }
-    server->sock_fd = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (server->sock_fd == -1) {
-        perror("socket");
-        goto init_server_cleanup_mutex_3;
-    }
-    if (!setup_server(server->sock_fd, &server->sock_addr, server_port)) {
-        goto init_server_cleanup_mutex_3_socket;
-    }
-    memset(server->first_workers_fds, -1,
-           sizeof(int) * MAX_NUMBER_OF_FIRST_WORKERS);
-    memset(server->second_workers_fds, -1,
-           sizeof(int) * MAX_NUMBER_OF_SECOND_WORKERS);
-    memset(server->third_workers_fds, -1,
-           sizeof(int) * MAX_NUMBER_OF_THIRD_WORKERS);
-    return true;
-
-init_server_cleanup_mutex_3_socket:
-    close(server->sock_fd);
-init_server_cleanup_mutex_3:
-    pthread_mutex_destroy(&server->third_workers_mutex);
-init_server_cleanup_mutex_2:
-    pthread_mutex_destroy(&server->second_workers_mutex);
-init_server_cleanup_mutex_1:
-    pthread_mutex_destroy(&server->first_workers_mutex);
-init_server_cleanup_empty:
-    return false;
-}
-
-static void close_workers_fds(int fds[], size_t array_max_size) {
-    for (size_t i = 0; i < array_max_size; i++) {
-        if (fds[i] != -1) {
-            close(fds[i]);
+static bool poll_workers(int workers_fds[],
+                         const WorkerMetainfo workers_info[],
+                         volatile size_t* current_workers_online,
+                         size_t max_number_of_workers, PinsQueue pins_q) {
+    for (size_t i = 0;
+         i < max_number_of_workers && *current_workers_online > 0 &&
+         !pins_queue_full(pins_q);
+         i++) {
+        int worker_fd = workers_fds[i];
+        if (worker_fd == -1) {
+            continue;
         }
-    }
-}
-
-void deinit_server(Server server) {
-    close_workers_fds(server->third_workers_fds,
-                      MAX_NUMBER_OF_THIRD_WORKERS);
-    close_workers_fds(server->second_workers_fds,
-                      MAX_NUMBER_OF_SECOND_WORKERS);
-    close_workers_fds(server->first_workers_fds,
-                      MAX_NUMBER_OF_FIRST_WORKERS);
-    close(server->sock_fd);
-    pthread_mutex_destroy(&server->third_workers_mutex);
-    pthread_mutex_destroy(&server->second_workers_mutex);
-    pthread_mutex_destroy(&server->first_workers_mutex);
-}
-
-static bool receive_worker_type(int worker_sock_fd, WorkerType* type) {
-    union {
-        char bytes[sizeof(*type)];
-        WorkerType type;
-    } buffer = {0};
-
-    bool received_type;
-    int tries = 4;
-    do {
-        received_type =
-            recv(worker_sock_fd, buffer.bytes, sizeof(buffer.bytes),
-                 MSG_DONTWAIT) == sizeof(buffer.bytes);
-    } while (!received_type && --tries > 0);
-
-    if (!received_type) {
-        return false;
-    }
-
-    *type = buffer.type;
-    return true;
-}
-
-static void fill_worker_metainfo(WorkerMetainfo* info,
-                                 const struct sockaddr_in* worker_addr) {
-    int gai_err = getnameinfo(
-        (const struct sockaddr*)worker_addr, sizeof(*worker_addr),
-        info->host, sizeof(info->host), info->port, sizeof(info->port), 0);
-    if (gai_err != 0) {
-        fprintf(stderr,
-                "> Could not fetch info about socket address: %s\n",
-                gai_strerror(gai_err));
-        strcpy(info->host, "unknown host");
-        strcpy(info->port, "unknown port");
-    }
-
-    gai_err = getnameinfo(
-        (const struct sockaddr*)worker_addr, sizeof(*worker_addr),
-        info->numeric_host, sizeof(info->numeric_host), info->numeric_port,
-        sizeof(info->numeric_port), NI_NUMERICSERV | NI_NUMERICHOST);
-    if (gai_err != 0) {
-        fprintf(stderr,
-                "> Could not fetch info about socket address: %s\n",
-                gai_strerror(gai_err));
-        strcpy(info->numeric_host, "unknown host");
-        strcpy(info->numeric_port, "unknown port");
-    }
-}
-
-static size_t insert_new_worker_into_arrays(
-    struct sockaddr_in workers_addrs[], int workers_fds[],
-    volatile size_t* array_size, const size_t max_array_size,
-    WorkerMetainfo workers_info[], const struct sockaddr_in* worker_addr,
-    int worker_sock_fd) {
-    assert(*array_size <= max_array_size);
-    for (size_t i = 0; i < max_array_size; i++) {
-        if (workers_fds[i] != -1) {
+        if (!is_socket_alive(worker_fd)) {
+            workers_fds[i] = -1;
+            close(worker_fd);
+            (*current_workers_online)--;
             continue;
         }
 
-        assert(array_size);
-        assert(*array_size < max_array_size);
-        assert(worker_addr);
-        assert(workers_addrs);
-        workers_addrs[i] = *worker_addr;
-        assert(array_size);
-        (*array_size)++;
-        fill_worker_metainfo(&workers_info[i], worker_addr);
-        assert(workers_fds);
-        workers_fds[i] = worker_sock_fd;
-        return i;
-    }
-
-    return (size_t)-1;
-}
-
-static bool handle_new_worker(Server server,
-                              const struct sockaddr_storage* storage,
-                              socklen_t worker_addrlen, int worker_sock_fd,
-                              WorkerType* type, size_t* insert_index) {
-    if (worker_addrlen != sizeof(struct sockaddr_in)) {
-        fprintf(stderr, "> Unknown worker of size %u\n", worker_addrlen);
-        return false;
-    }
-
-    // Enable sending of keep-alive messages
-    // on connection-oriented sockets.
-    uint32_t val = 1;
-    if (setsockopt(worker_sock_fd, SOL_SOCKET, SO_KEEPALIVE, &val,
-                   sizeof(val)) == -1) {
-        perror("setsockopt");
-        return false;
-    }
-
-    // The time (in seconds) the connection needs to remain idle
-    // before TCP starts sending keepalive probes, if the socket
-    // option SO_KEEPALIVE has been set on this socket.
-    val = MAX_SLEEP_TIME;
-    if (setsockopt(worker_sock_fd, IPPROTO_TCP, TCP_KEEPIDLE, &val,
-                   sizeof(val)) == -1) {
-        perror("setsockopt");
-        return false;
-    }
-
-    struct sockaddr_in worker_addr = {0};
-    memcpy(&worker_addr, storage, sizeof(worker_addr));
-
-    if (!receive_worker_type(worker_sock_fd, type)) {
-        fprintf(stderr, "> Could not get worker type at port %u\n",
-                worker_addr.sin_port);
-        return false;
-    }
-
-    const WorkerMetainfo* info_array;
-    switch (*type) {
-        case FIRST_STAGE_WORKER: {
-            if (!server_lock_first_mutex(server)) {
-                return false;
+        union {
+            char bytes[NET_BUFFER_SIZE];
+            Pin pin;
+        } buffer = {0};
+        const ssize_t read_size =
+            recv(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
+        if (read_size != sizeof(Pin)) {
+            switch (handle_nonblocking_error("recv")) {
+                case EMPTY_WORKER_SOCKET:
+                    continue;
+                case DEAD_WORKER_SOCKET:
+                    workers_fds[i] = -1;
+                    close(worker_fd);
+                    (*current_workers_online)--;
+                    continue;
+                case UNKNOWN_SOCKET_ERROR:
+                default:
+                    return false;
             }
-            *insert_index = insert_new_worker_into_arrays(
-                server->first_workers_addrs, server->first_workers_fds,
-                &server->first_workers_arr_size,
-                MAX_NUMBER_OF_FIRST_WORKERS, server->first_workers_info,
-                &worker_addr, worker_sock_fd);
-            if (!server_unlock_first_mutex(server)) {
-                return false;
-            }
-            info_array = server->first_workers_info;
-        } break;
-        case SECOND_STAGE_WORKER: {
-            if (!server_lock_second_mutex(server)) {
-                return false;
-            }
-            *insert_index = insert_new_worker_into_arrays(
-                server->second_workers_addrs, server->second_workers_fds,
-                &server->second_workers_arr_size,
-                MAX_NUMBER_OF_SECOND_WORKERS, server->second_workers_info,
-                &worker_addr, worker_sock_fd);
-            if (!server_unlock_second_mutex(server)) {
-                return false;
-            }
-            info_array = server->second_workers_info;
-        } break;
-        case THIRD_STAGE_WORKER: {
-            if (!server_lock_third_mutex(server)) {
-                return false;
-            }
-            *insert_index = insert_new_worker_into_arrays(
-                server->third_workers_addrs, server->third_workers_fds,
-                &server->third_workers_arr_size,
-                MAX_NUMBER_OF_THIRD_WORKERS, server->third_workers_info,
-                &worker_addr, worker_sock_fd);
-            if (!server_unlock_third_mutex(server)) {
-                return false;
-            }
-            info_array = server->third_workers_info;
-        } break;
-        default:
-            fprintf(stderr, "> Unknown worker type: %d\n", *type);
-            return false;
-    }
-
-    const char* worker_type = worker_type_to_string(*type);
-    if (*insert_index == (size_t)-1) {
-        fprintf(stderr,
-                "> Can't accept new worker: limit for workers "
-                "of type \"%s\" has been reached\n",
-                worker_type);
-        return false;
-    }
-
-    const WorkerMetainfo* info = &info_array[*insert_index];
-    printf(
-        "> Accepted new worker with type \"%s\"(address=%s:%s | %s:%s)\n",
-        worker_type, info->host, info->port, info->numeric_host,
-        info->numeric_port);
-    return true;
-}
-
-static void send_shutdown_signal_to_one_impl(int sock_fd,
-                                             const WorkerMetainfo* info);
-
-bool server_accept_worker(Server server, WorkerType* type,
-                          size_t* insert_index) {
-    struct sockaddr_storage storage;
-    socklen_t worker_addrlen = sizeof(storage);
-    int worker_sock_fd       = accept(
-        server->sock_fd, (struct sockaddr*)&storage, &worker_addrlen);
-    if (worker_sock_fd == -1) {
-        if (errno != EINTR) {
-            perror("accept");
         }
-        return false;
-    }
-    if (!handle_new_worker(server, &storage, worker_addrlen,
-                           worker_sock_fd, type, insert_index)) {
-        send_shutdown_signal_to_one_impl(worker_sock_fd, NULL);
-        close(worker_sock_fd);
-        return false;
-    }
-    return true;
-}
 
-static void send_shutdown_signal_to_one_impl(int sock_fd,
-                                             const WorkerMetainfo* info) {
-    const char* host         = info ? info->host : "unknown host";
-    const char* port         = info ? info->port : "unknown port";
-    const char* numeric_host = info ? info->numeric_host : "unknown host";
-    const char* numeric_port = info ? info->numeric_port : "unknown port";
-    if (send(sock_fd, SHUTDOWN_MESSAGE, SHUTDOWN_MESSAGE_SIZE, 0) !=
-        SHUTDOWN_MESSAGE_SIZE) {
-        perror("send");
-        fprintf(stderr,
-                "> Could not send shutdown signal to the "
-                "worker[address=%s:%s | %s:%s]\n",
-                host, port, numeric_host, numeric_port);
-    } else {
+        const WorkerMetainfo* info = &workers_info[i];
         printf(
-            "> Sent shutdown signal to the "
+            "> Received pin[pin_id=%d] from the "
             "worker[address=%s:%s | %s:%s]\n",
-            host, port, numeric_host, numeric_port);
-        if (shutdown(sock_fd, SHUT_RDWR) == -1) {
-            perror("shutdown");
+            buffer.pin.pin_id, info->host, info->port, info->numeric_host,
+            info->numeric_port);
+        bool res = pins_queue_try_put(pins_q, buffer.pin);
+        assert(res);
+    }
+
+    return true;
+}
+
+static bool send_pins_to_workers(int workers_fds[],
+                                 const WorkerMetainfo workers_info[],
+                                 volatile size_t* current_workers_online,
+                                 size_t max_number_of_workers,
+                                 PinsQueue pins_q) {
+    for (size_t i = 0;
+         i < max_number_of_workers && *current_workers_online > 0 &&
+         !pins_queue_empty(pins_q);
+         i++) {
+        int worker_fd = workers_fds[i];
+        if (worker_fd == -1) {
+            continue;
+        }
+
+        if (!is_socket_alive(worker_fd)) {
+            workers_fds[i] = -1;
+            close(worker_fd);
+            (*current_workers_online)--;
+            continue;
+        }
+
+        union {
+            char bytes[sizeof(Pin)];
+            Pin pin;
+        } buffer;
+        Pin pin;
+        bool res = pins_queue_try_pop(pins_q, &pin);
+        assert(res);
+        buffer.pin = pin;
+
+        const ssize_t sent_size =
+            send(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
+        if (sent_size != sizeof(Pin)) {
+            switch (handle_nonblocking_error("send")) {
+                case EMPTY_WORKER_SOCKET:
+                    continue;
+                case DEAD_WORKER_SOCKET:
+                    workers_fds[i] = -1;
+                    close(worker_fd);
+                    (*current_workers_online)--;
+                    continue;
+                case UNKNOWN_SOCKET_ERROR:
+                default:
+                    return false;
+            }
+        }
+
+        const WorkerMetainfo* info = &workers_info[i];
+        printf(
+            "> Send pin[pid_id=%d] to the "
+            "worker[address=%s:%s | %s:%s]\n",
+            buffer.pin.pin_id, info->host, info->port, info->numeric_host,
+            info->numeric_port);
+    }
+
+    return true;
+}
+
+static bool poll_workers_on_the_first_stage(PinsQueue pins_1_to_2) {
+    if (server.first_workers_arr_size == 0 ||
+        pins_queue_full(pins_1_to_2)) {
+        return true;
+    }
+
+    // printf("> Starting to poll workers on the first stage\n");
+    if (!server_lock_first_mutex(&server)) {
+        return false;
+    }
+    bool res =
+        poll_workers(server.first_workers_fds, server.first_workers_info,
+                     &server.first_workers_arr_size,
+                     MAX_NUMBER_OF_FIRST_WORKERS, pins_1_to_2);
+    if (!server_unlock_first_mutex(&server)) {
+        return false;
+    }
+    // printf("> Ended polling workers on the first stage\n");
+
+    return res;
+}
+
+static bool poll_workers_on_the_second_stage(PinsQueue pins_1_to_2,
+                                             PinsQueue pins_2_to_3) {
+    if (server.second_workers_arr_size == 0 ||
+        (pins_queue_full(pins_1_to_2) && pins_queue_empty(pins_2_to_3))) {
+        return true;
+    }
+
+    // printf("> Starting to poll workers on the second stage\n");
+    if (!server_lock_second_mutex(&server)) {
+        return false;
+    }
+    bool res = send_pins_to_workers(
+        server.second_workers_fds, server.second_workers_info,
+        &server.second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS,
+        pins_1_to_2);
+    if (res) {
+        poll_workers(server.second_workers_fds, server.second_workers_info,
+                     &server.second_workers_arr_size,
+                     MAX_NUMBER_OF_SECOND_WORKERS, pins_2_to_3);
+    }
+    if (!server_unlock_second_mutex(&server)) {
+        return false;
+    }
+    // printf("> Ended polling workers on the second stage\n");
+
+    return res;
+}
+
+static bool poll_workers_on_the_third_stage(PinsQueue pins_2_to_3) {
+    if (server.third_workers_arr_size == 0 ||
+        pins_queue_empty(pins_2_to_3)) {
+        return true;
+    }
+
+    // printf("> Starting to poll workers on the third stage\n");
+    if (!server_lock_third_mutex(&server)) {
+        return false;
+    }
+    bool res = send_pins_to_workers(
+        server.third_workers_fds, server.third_workers_info,
+        &server.third_workers_arr_size, MAX_NUMBER_OF_THIRD_WORKERS,
+        pins_2_to_3);
+    if (!server_unlock_third_mutex(&server)) {
+        return false;
+    }
+    // printf("> Ended polling workers on the third stage\n");
+
+    return res;
+}
+
+static void* workers_poller(void* unused) {
+    (void)unused;
+    const struct timespec sleep_time = {
+        .tv_sec  = 1,
+        .tv_nsec = 500000000,
+    };
+
+    PinsQueue pins_1_to_2 = {0};
+    PinsQueue pins_2_to_3 = {0};
+    while (is_poller_running) {
+        if (!poll_workers_on_the_first_stage(pins_1_to_2)) {
+            fprintf(stderr,
+                    "> Could not poll workers on the first stage\n");
+            break;
+        }
+        if (!poll_workers_on_the_second_stage(pins_1_to_2, pins_2_to_3)) {
+            fprintf(stderr,
+                    "> Could not poll workers on the second stage\n");
+            break;
+        }
+        if (!poll_workers_on_the_third_stage(pins_2_to_3)) {
+            fprintf(stderr,
+                    "> Could not poll workers on the third stage\n");
+            break;
+        }
+        if (nanosleep(&sleep_time, NULL) == -1) {
+            if (errno != EINTR) {  // if not interrupted by the signal
+                perror("nanosleep");
+            }
+            break;
         }
     }
+
+    int32_t ret       = is_poller_running ? EXIT_FAILURE : EXIT_SUCCESS;
+    is_poller_running = false;
+    return (void*)(uintptr_t)(uint32_t)ret;
 }
 
-void send_shutdown_signal_to_one(const Server server, WorkerType type,
-                                 size_t index) {
-    const int* fds_arr;
-    const WorkerMetainfo* infos_arr;
-    switch (type) {
-        case FIRST_STAGE_WORKER:
-            assert(index < MAX_NUMBER_OF_FIRST_WORKERS);
-            fds_arr   = server->first_workers_fds;
-            infos_arr = server->first_workers_info;
-            break;
-        case SECOND_STAGE_WORKER:
-            assert(index < MAX_NUMBER_OF_SECOND_WORKERS);
-            fds_arr   = server->second_workers_fds;
-            infos_arr = server->second_workers_info;
-            break;
-        case THIRD_STAGE_WORKER:
-            assert(index < MAX_NUMBER_OF_THIRD_WORKERS);
-            fds_arr   = server->third_workers_fds;
-            infos_arr = server->third_workers_info;
-            break;
-        default:
-            return;
+static int start_runtime_loop() {
+    pthread_t poll_thread = 0;
+    int ret = pthread_create(&poll_thread, NULL, &workers_poller, NULL);
+    if (ret != 0) {
+        errno = ret;
+        perror("pthread_create");
+        return EXIT_FAILURE;
     }
 
-    int sock_fd = fds_arr[index];
-    if (sock_fd == -1) {
-        return;
+    printf("> Started polling thread\n> Server ready to accept connections\n");
+
+    while (is_acceptor_running) {
+        WorkerType type;
+        size_t insert_index;
+        server_accept_worker(&server, &type, &insert_index);
     }
 
-    send_shutdown_signal_to_one_impl(sock_fd, &infos_arr[index]);
+    void* poll_ret       = NULL;
+    int pthread_join_ret = pthread_join(poll_thread, &poll_ret);
+    if (pthread_join_ret != 0) {
+        errno = pthread_join_ret;
+        perror("pthread_join");
+    }
+
+    send_shutdown_signal_to_all(&server);
+    printf(
+        "> Sent shutdown signals to all clients\n"
+        "> Started waiting for %u seconds before closing the sockets...\n",
+        (uint32_t)MAX_SLEEP_TIME);
+    sleep(MAX_SLEEP_TIME);
+
+    return (int)(uintptr_t)poll_ret;
 }
 
-static void send_shutdown_signal_to_all_in_arr_impl(
-    const int sock_fds[], const WorkerMetainfo workers_info[],
-    size_t max_array_size) {
-    for (size_t i = 0; i < max_array_size; i++) {
-        int sock_fd = sock_fds[i];
-        if (sock_fd != -1) {
-            send_shutdown_signal_to_one_impl(sock_fd, &workers_info[i]);
-        }
+static int run_server(uint16_t server_port) {
+    if (!init_server(&server, server_port)) {
+        return EXIT_FAILURE;
     }
+
+    int ret = start_runtime_loop(&server);
+    deinit_server(&server);
+    printf("> Deinitialized server resources\n");
+    return ret;
 }
 
-void send_shutdown_signal_to_first_workers(Server server) {
-    if (server_lock_first_mutex(server)) {
-        send_shutdown_signal_to_all_in_arr_impl(
-            server->first_workers_fds, server->first_workers_info,
-            MAX_NUMBER_OF_FIRST_WORKERS);
-        server->first_workers_arr_size = 0;
-        server_unlock_first_mutex(server);
-    }
-}
+int main(int argc, const char* argv[]) {
+    setup_signal_handler();
 
-void send_shutdown_signal_to_second_workers(Server server) {
-    if (server_lock_second_mutex(server)) {
-        send_shutdown_signal_to_all_in_arr_impl(
-            server->second_workers_fds, server->second_workers_info,
-            MAX_NUMBER_OF_SECOND_WORKERS);
-        server->second_workers_arr_size = 0;
-        server_unlock_second_mutex(server);
+    ParseResultServer res = parse_args_server(argc, argv);
+    if (res.status != PARSE_SUCCESS) {
+        print_invalid_args_error_server(res.status, argv[0]);
+        return EXIT_FAILURE;
     }
-}
 
-void send_shutdown_signal_to_third_workers(Server server) {
-    if (server_lock_third_mutex(server)) {
-        send_shutdown_signal_to_all_in_arr_impl(
-            server->third_workers_fds, server->third_workers_info,
-            MAX_NUMBER_OF_THIRD_WORKERS);
-        server->third_workers_arr_size = 0;
-        server_unlock_third_mutex(server);
-    }
-}
-
-void send_shutdown_signal_to_all_of_type(Server server, WorkerType type) {
-    switch (type) {
-        case FIRST_STAGE_WORKER:
-            send_shutdown_signal_to_first_workers(server);
-            break;
-        case SECOND_STAGE_WORKER:
-            send_shutdown_signal_to_second_workers(server);
-            break;
-        case THIRD_STAGE_WORKER:
-            send_shutdown_signal_to_third_workers(server);
-            break;
-        default:
-            return;
-    }
-}
-
-void send_shutdown_signal_to_all(Server server) {
-    send_shutdown_signal_to_first_workers(server);
-    send_shutdown_signal_to_second_workers(server);
-    send_shutdown_signal_to_third_workers(server);
+    return run_server(res.port);
 }
