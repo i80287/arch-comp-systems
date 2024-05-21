@@ -4,15 +4,16 @@
 
 ## Описание программ
 
-**Для выполнения задачи были написаны 5 программы:**
+**Для выполнения задачи были написаны 6 программ:**
 * #### server.c - сервер, к которому подключаются клиенты (рабочие на участках) и который перенаправляет сообщения между ними, выводя информацию в консоль. Функции для инициализации стркутуры Server и работы с сетью вынесены в модуль server-tools.c.
 * #### first-worker.c - клиент, эмулирующий работу работника на 1 участке.
 * #### second-worker.c - клиент, эмулирующий работу работника на 2 участке.
 * #### third-worker.c - клиент, эмулирующий работу работника на 3 участке.
 * #### logs-collector.c - клиент, подключающийся к серверу и получающий логи от него.
-#### Для работы с сетью все клиенты (рабочие) используют функции из модуля client-tools.c.
+* #### manager.c - клиент, подключающийся к серверу и имеющий возможность отключать других клиентов.
+#### Для работы с сетью все клиенты используют функции из модуля client-tools.c.
 
-Корретное завершение работы приложения возможно при нажатии сочетания клавиш Ctrl-C, в таком случае сервер пошлёт всем клиентам специальный сигнал о завершении работы и корректно деинициализирует все выделенные ресурсы. Если клиент разрывает соединение, сервер корректно обрабатывает это и удаляет клиента из внтуреннего массива клиентов.
+Корретное завершение работы приложения возможно при нажатии сочетания клавиш Ctrl-C, в таком случае сервер пошлёт всем клиентам специальный сигнал о завершении работы и корректно деинициализирует все выделенные ресурсы. Если клиент разрывает соединение, сервер корректно обрабатывает это и удаляет клиента из внуреннего массива клиентов.
 
 ---
 
@@ -46,33 +47,45 @@ int main(int argc, const char* argv[]) {
 ```c
 static int start_runtime_loop() {
     pthread_t poll_thread;
-    if (!create_polling_thread(&poll_thread)) {
+    if (!create_thread(&poll_thread, &workers_poller)) {
         return EXIT_FAILURE;
     }
     printf("> Started polling thread\n");
 
     pthread_t logs_thread;
-    if (!create_logging_thread(&logs_thread)) {
-        pthread_detach(poll_thread);
+    if (!create_thread(&logs_thread, &logs_sender)) {
+        pthread_cancel(poll_thread);
         return EXIT_FAILURE;
     }
     printf("> Started logging thread\n");
 
-    ServerLog log = {0};
+    pthread_t managers_thread;
+    if (!create_thread(&managers_thread, &managers_handler)) {
+        pthread_cancel(logs_thread);
+        pthread_cancel(poll_thread);
+        return EXIT_FAILURE;
+    }
+    printf("> Started managers thread\n");
+
     printf("> Server ready to accept connections\n");
     while (is_acceptor_running) {
-        ClientType type;
-        size_t insert_index;
-        server_accept_client(&server, &type, &insert_index);
-        if (!nonblocking_enqueue_log(&server, &log)) {
-            fprintf(stderr, "> Logs queue if full. Can't add new log to the queue\n");
+        if (!server_accept_client(&server)) {
+            break;
         }
     }
 
-    int ret1 = join_thread(logs_thread);
-    int ret2 = join_thread(poll_thread);
+    const int ret = is_acceptor_running ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (is_acceptor_running) {
+        stop_all_threads();
+    }
+    const int ret_1 = join_thread(logs_thread);
+    printf("Joined logging thread\n");
+    const int ret_2 = join_thread(poll_thread);
+    printf("Joined polling thread\n");
+    const int ret_3 = join_thread(managers_thread);
+    printf("Joined managers thread\n");
 
-    printf("Started sending shutdown signals to all clients\n");
+    printf("> Started sending shutdown signals to all clients\n");
     send_shutdown_signal_to_all(&server);
     printf(
         "> Sent shutdown signals to all clients\n"
@@ -80,7 +93,7 @@ static int start_runtime_loop() {
         (uint32_t)MAX_SLEEP_TIME);
     sleep(MAX_SLEEP_TIME);
 
-    return ret1 | ret2;
+    return ret | ret_1 | ret_2 | ret_3;
 }
 ```
 
@@ -116,8 +129,10 @@ static void* workers_poller(void* unused) {
         }
     }
 
-    int32_t ret       = is_poller_running ? EXIT_FAILURE : EXIT_SUCCESS;
-    is_poller_running = false;
+    int32_t ret = is_poller_running ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (is_poller_running) {
+        stop_all_threads();
+    }
     return (void*)(uintptr_t)(uint32_t)ret;
 }
 ```
@@ -153,17 +168,108 @@ static void* logs_sender(void* unused) {
 }
 ```
 
+### Процесс, работающий с менеджерами клиентов (клиенты, которые могу отключать других клиентов и себя), раз в некоторое время оправшиает клиентов на наличие команд на исполнение, и, если команда есть, выполняет её и посылает результат выполнения обратно клиенту, отправившему команду.
+```c
+static void* managers_handler(void* unused) {
+    (void)unused;
+    const struct timespec sleep_time = {
+        .tv_sec  = 1,
+        .tv_nsec = 500000000,
+    };
+
+    ServerLog log;
+    ServerCommand cmd = {0};
+    while (is_managers_handler_running) {
+        if (nanosleep(&sleep_time, NULL) == -1) {
+            if (errno != EINTR) {  // if not interrupted by the signal
+                perror("nanosleep");
+            }
+            break;
+        }
+        size_t manager_index = (size_t)-1;
+        if (!nonblocking_poll_managers(&server, &cmd, &manager_index)) {
+            fputs("> Could not get next command\n", stderr);
+            break;
+        }
+        if (manager_index == (size_t)-1) {
+            continue;
+        }
+        const ClientMetaInfo* const info = &server.managers_info[manager_index];
+        int ret = snprintf(log.message, sizeof(log.message),
+                           "> Received command to shutdown "
+                           "client[address=%s:%u]\n"
+                           "  from manager[address=%s:%s | %s:%s]\n",
+                           cmd.ip_address, cmd.port, info->host, info->port, info->numeric_host,
+                           info->numeric_port);
+        assert(ret > 0);
+        assert(log.message[0] != '\0');
+        print_and_enqueue_log(&log);
+        ServerCommandResult res = execute_command(&server, &cmd);
+        ret = snprintf(log.message, sizeof(log.message),
+                       "> Executed shutdown command on "
+                       "client at address %s:%u\n"
+                       "  Server result: %s\n",
+                       cmd.ip_address, cmd.port, server_command_result_to_string(res));
+        assert(ret > 0);
+        assert(log.message[0] != '\0');
+        print_and_enqueue_log(&log);
+        if (!send_command_result_to_manager(&server, res, manager_index)) {
+            fputs("> Could not send command result to manger\n", stderr);
+            break;
+        }
+        ret = snprintf(log.message, sizeof(log.message),
+                       "> Send command result back to "
+                       "manager[address=%s:%s | %s:%s]\n",
+                       info->host, info->port, info->numeric_host, info->numeric_port);
+        assert(ret > 0);
+        assert(log.message[0] != '\0');
+        print_and_enqueue_log(&log);
+    }
+
+    int32_t ret = is_managers_handler_running ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (is_managers_handler_running) {
+        stop_all_threads();
+    }
+    return (void*)(uintptr_t)(uint32_t)ret;
+}
+```
+
 ### Интерфейс модуля server-tools.h для работы с сетью (в отчёте без include'ов и у функций только сигнатуры):
 ```c
+#pragma once
+
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+
+#include <errno.h>       // for errno
+#include <netinet/in.h>  // for sockaddr_in
+#include <pthread.h>     // for pthread_mutex_t, pthread_mutex_lock, pthre...
+#include <stdatomic.h>   // for atomic_int
+#include <stdbool.h>     // for bool
+#include <stdint.h>      // for uint16_t
+#include <stdio.h>       // for size_t, perror
+#include <stdlib.h>      // for rand
+
+#include "net-config.h"
+#include "server-command.h"
+#include "server-log.h"
+#include "server-logs-queue.h"
+
 enum {
     MAX_NUMBER_OF_FIRST_WORKERS   = 3,
     MAX_NUMBER_OF_SECOND_WORKERS  = 5,
     MAX_NUMBER_OF_THIRD_WORKERS   = 2,
     MAX_NUMBER_OF_LOGS_COLLECTORS = 6,
+    MAX_NUMBER_OF_MANAGERS        = 4,
 
     MAX_WORKERS_PER_SERVER =
         MAX_NUMBER_OF_FIRST_WORKERS + MAX_NUMBER_OF_SECOND_WORKERS + MAX_NUMBER_OF_THIRD_WORKERS,
-    MAX_CONNECTIONS_PER_SERVER = MAX_WORKERS_PER_SERVER + MAX_NUMBER_OF_LOGS_COLLECTORS,
+    MAX_CONNECTIONS_PER_SERVER =
+        MAX_WORKERS_PER_SERVER + MAX_NUMBER_OF_LOGS_COLLECTORS + MAX_NUMBER_OF_MANAGERS,
 };
 
 typedef struct ClientMetaInfo {
@@ -201,13 +307,19 @@ typedef struct Server {
     struct ClientMetaInfo logs_collectors_info[MAX_NUMBER_OF_LOGS_COLLECTORS];
     volatile size_t logs_collectors_arr_size;
 
+    pthread_mutex_t managers_mutex;
+    struct sockaddr_in managers_addrs[MAX_CONNECTIONS_PER_SERVER];
+    int managers_fds[MAX_CONNECTIONS_PER_SERVER];
+    struct ClientMetaInfo managers_info[MAX_CONNECTIONS_PER_SERVER];
+    volatile size_t managers_arr_size;
+
     struct ServerLogsQueue logs_queue;
 } Server[1];
 
 bool init_server(Server server, uint16_t server_port);
 void deinit_server(Server server);
 
-bool server_accept_client(Server server, ClientType* type, size_t* insert_index);
+bool server_accept_client(Server server);
 bool nonblocking_enqueue_log(Server server, const ServerLog* log);
 bool dequeue_log(Server server, ServerLog* log);
 void send_server_log(Server server, const ServerLog* log);
@@ -216,12 +328,18 @@ void send_shutdown_signal_to_first_workers(Server server);
 void send_shutdown_signal_to_second_workers(Server server);
 void send_shutdown_signal_to_third_workers(Server server);
 void send_shutdown_signal_to_logs_collectors(Server server);
+void send_shutdown_signal_to_managers(Server server);
 void send_shutdown_signal_to_all_clients_of_type(Server server, ClientType type);
 void send_shutdown_signal_to_all(Server server);
 
 bool nonblocking_poll_workers_on_the_first_stage(Server server, PinsQueue pins_1_to_2);
-bool nonblocking_poll_workers_on_the_second_stage(Server server, PinsQueue pins_1_to_2, PinsQueue pins_2_to_3);
+bool nonblocking_poll_workers_on_the_second_stage(Server server, PinsQueue pins_1_to_2,
+                                                  PinsQueue pins_2_to_3);
 bool nonblocking_poll_workers_on_the_third_stage(Server server, PinsQueue pins_2_to_3);
+bool nonblocking_poll_managers(Server server, ServerCommand* cmd, size_t* manager_index);
+
+ServerCommandResult execute_command(Server server, const ServerCommand* cmd);
+bool send_command_result_to_manager(Server server, ServerCommandResult res, size_t manager_index);
 
 static inline bool server_lock_mutex(pthread_mutex_t* mutex);
 static inline bool server_unlock_mutex(pthread_mutex_t* mutex);
@@ -233,9 +351,13 @@ static inline bool server_lock_third_mutex(Server server);
 static inline bool server_unlock_third_mutex(Server server);
 static inline bool server_lock_logs_collectors_mutex(Server server);
 static inline bool server_unlock_logs_collectors_mutex(Server server);
+static inline bool server_lock_managers_mutex(Server server);
+static inline bool server_unlock_managers_mutex(Server server);
 ```
 
 Т.к. константа MAX_NUMBER_OF_LOGS_COLLECTORS = 6, то в данном случае возможно подключение нескольких, но не более 6 клиентов-логгеров.
+
+Т.к. константа MAX_NUMBER_OF_MANAGERS = 6, то в данном случае возможно подключение нескольких, но не более 4 клиентов-менеджеров.
 
 ### Структура булавки и структура очереди булавок описаны в файле "pin.h":
 
@@ -385,61 +507,94 @@ static int start_runtime_loop(Client logs_col) {
 }
 ```
 
+### Клиент-менеджер парсит входные аргументы, и, если адрес порт указаны корректно, инициализирует ресурсы структуру Client и запускает основной цикл:
+
 ### Интерфейс модуля client-tools.h для работы с сетью (в отчёте без include'ов и у функций только сигнатуры):
 ```c
-typedef struct Client {
-    int client_sock_fd;
-    ClientType type;
-    struct sockaddr_in server_sock_addr;
-} Client[1];
+static int run_manager(const char* server_ip_address, uint16_t server_port) {
+    Client manager;
+    if (!init_client(manager, server_ip_address, server_port, MANAGER_CLIENT)) {
+        return EXIT_FAILURE;
+    }
 
-bool init_client(Client client, const char* server_ip, uint16_t server_port, ClientType type);
-void deinit_client(Client client);
+    print_client_info(manager);
+    int ret = start_runtime_loop(manager);
+    deinit_client(manager);
+    return ret;
+}
 
-static inline bool is_worker(const Client client);
-bool client_should_stop(const Client client);
-bool receive_server_log(Client logs_collector, ServerLog* log);
-void print_sock_addr_info(const struct sockaddr* address, socklen_t sock_addr_len);
-static inline void print_client_info(Client client);
+int main(int argc, char const* argv[]) {
+    ParseResultClient res = parse_args_client(argc, argv);
+    if (res.status != PARSE_SUCCESS) {
+        print_invalid_args_error_client(res.status, argv[0]);
+        return EXIT_FAILURE;
+    }
 
-Pin receive_new_pin();
-bool check_pin_crookness(Pin pin);
-bool send_pin(int sock_fd, const struct sockaddr_in* sock_addr, Pin pin);
-bool send_not_croocked_pin(Client worker, Pin pin);
-bool receive_pin(int sock_fd, Pin* rec_pin);
-bool receive_not_crooked_pin(Client worker, Pin* rec_pin);
-void sharpen_pin(Pin pin);
-bool send_sharpened_pin(Client worker, Pin pin);
-bool receive_sharpened_pin(Client worker, Pin* rec_pin);
-bool check_sharpened_pin_quality(Pin sharpened_pin);
+    return run_manager(res.ip_address, res.port);
+}
+```
+
+```c
+static bool next_user_command();
+static void get_command_args(ServerCommand* cmd);
+static void handle_server_response(ServerCommandResult res, int* ret);
+
+static int start_runtime_loop(Client manager) {
+    int ret                     = EXIT_SUCCESS;
+    bool exit_requested_by_user = false;
+    while (ret == EXIT_SUCCESS && !client_should_stop(manager)) {
+        if (!next_user_command()) {
+            exit_requested_by_user = true;
+            break;
+        }
+
+        ServerCommand cmd = {0};
+        get_command_args(&cmd);
+        ServerCommandResult resp = send_command_to_server(manager, &cmd);
+        handle_server_response(resp, &ret);
+    }
+
+    if (ret == EXIT_SUCCESS && !exit_requested_by_user) {
+        printf("Received shutdown signal from the server\n");
+    }
+
+    printf("Manager is stopping...\n");
+    return ret;
+}
 ```
 
 ---
 ## Пример работы приложений
 
 #### Запуск сервера без аргументов. Сервер сообщает о неверно введённых входных данных и выводит формат и пример использования.
-![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img1.png?raw=true)
+![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img1.png?raw=true)
 
 #### Запуск клиенты без аргументов. Клиент сообщает о неверно введённых входных данных и выводит формат и пример использования.
-![clnt_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img2.png?raw=true)
+![clnt_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img2.png?raw=true)
 
 #### Запуск сервера. Сервер запускается на локальном адресе 127.0.0.1 (localhost) на порте 45235.
-![img3](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img3.png?raw=true)
+![img3](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img3.png?raw=true)
 
-#### Запуск клиента first-worker (рабочего на 1 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45234 и выводит информацию о сервере (правая консоль). Сервер принимает клиента и выводит информацию о нём (левая консоль) (информация: "first stage worker"(address=localhost:54100 | 127.0.0.1:54100)). На момент создания скриншота клиент уже успел передать серверу одну проверенную на отсутствие кривизны булавку с id 1804289383. Сервер вывел информацию о том, что получил булавку с id 1804289383.
-![img4](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img4.png?raw=true)
+#### Запуск клиента first-worker (рабочего на 1 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45234 и выводит информацию о сервере (правая консоль). Сервер принимает клиента и выводит информацию о нём (левая консоль) (информация: "first stage worker"(address=localhost:37116 | 127.0.0.1:37116)). На момент создания скриншота клиент уже успел передать серверу одну проверенную на отсутствие кривизны булавку с id 1804289383. Сервер вывел информацию о том, что получил булавку с id 1804289383.
+![img4](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img4.png?raw=true)
 
-#### Запуск клиента second-worker (рабочего на 2 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45234 и выводит информацию о сервере (3-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "second stage worker"(address=localhost:41310 | 127.0.0.1:41310)). На момент создания скриншота сервер уже успел передать клиенту одну проверенную на отсутствие кривизны булавку с id 1804289383. Клиент вывел информацию о том, что получил булавку с id 1804289383 и начал затачивать её.
-![img5](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img5.png?raw=true)
+#### Запуск клиента second-worker (рабочего на 2 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45234 и выводит информацию о сервере (3-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "second stage worker"(address=localhost:56154 | 127.0.0.1:56154)). На момент создания скриншота сервер уже успел передать клиенту одну проверенную на отсутствие кривизны булавку с id 1804289383. Клиент вывел информацию о том, что получил булавку с id 1804289383 и начал затачивать её.
+![img5](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img5.png?raw=true)
 
-#### Запуск клиента third-worker (рабочего на 3 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (4-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "third stage worker"(address=localhost:56006 | 127.0.0.1:56006)).
-![img6](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img6.png?raw=true)
+#### Запуск клиента third-worker (рабочего на 3 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (4-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "third stage worker"(address=localhost:46956 | 127.0.0.1:46956)).
+![img6](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img6.png?raw=true)
 
-#### Запуск первого клиента-логгера logs-collector. Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (а также логи, отправленные сервером) (5-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: ""(address=localhost:49596 | 127.0.0.1:49596)).
-![img7](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img7.png?raw=true)
+#### Запуск клиента-логгера logs-collector. Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (а также логи, отправленные сервером) (5-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "logs collector"(address=localhost:45044 | 127.0.0.1:45044)).
+![img7](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img7.png?raw=true)
 
-#### Запуск второго клиента-логгера logs-collector. Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (а также логи, отправленные сервером) (6-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: ""(address=localhost:46484 | 127.0.0.1:46484)).
-![img8](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img8.png?raw=true)
+#### Запуск клиента-менеджера manager. Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (6-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "manager"(address=localhost:60290 | 127.0.0.1:60290)).
+![img8](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img8.png?raw=true)
+
+#### Клиент-менеджер завершил работу клиента рабочего на 3-й площадке.
+![img9](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img9.png?raw=true)
+
+#### Клиент рабочего на 3-й площадке third-worker переподключился.
+![img10](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img10.png?raw=true)
 
 #### Завершение работы системы при нажатии сочетания клавиш Ctrl-C в консоли сервера. Сервер посылает сигнал о завершении клиентам, ждёт некоторое время, и после этого закрывает все сокеты и деинициализирует ресурсы. Все клиенты и сервер завершили работу.
-![img9](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-8/images/img9.png?raw=true)
+![img11](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-11/images/img11.png?raw=true)

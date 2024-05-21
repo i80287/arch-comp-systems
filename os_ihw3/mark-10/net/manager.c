@@ -7,7 +7,16 @@
 #include "client-tools.h"
 #include "net-config.h"
 
-static bool next_command() {
+static size_t strip_string(char* str) {
+    size_t len = strlen(str);
+    while (len > 0 && isspace((uint8_t)str[len - 1])) {
+        len--;
+    }
+    str[len] = '\0';
+    return len;
+}
+
+static bool next_user_command() {
     printf(
         "Enter command:\n"
         "> 1. Disable client\n"
@@ -21,15 +30,6 @@ static bool next_command() {
     }
 
     return cmd == 1;
-}
-
-static size_t strip_string(char* str) {
-    size_t len = strlen(str);
-    while (len > 0 && isspace((uint8_t)str[len - 1])) {
-        len--;
-    }
-    str[len] = '\0';
-    return len;
 }
 
 static void get_command_args(ServerCommand* cmd) {
@@ -64,37 +64,41 @@ static void get_command_args(ServerCommand* cmd) {
     }
 }
 
+static void handle_server_response(ServerCommandResult res, int* ret) {
+    switch (res) {
+        case SERVER_COMMAND_SUCCESS:
+            printf("Server response: success\n");
+            break;
+        case INVALID_SERVER_COMMAND_ARGS:
+            printf("Server response: invalid command arguments\n");
+            break;
+        case SERVER_INTERNAL_ERROR:
+            printf("Server response: internal error\n");
+            break;
+        case NO_CONNECTION:
+            printf("No connection to the server\n");
+            *ret = EXIT_FAILURE;
+            break;
+        default:
+            printf("Unknown server response: %d\n", res);
+            *ret = EXIT_FAILURE;
+            break;
+    }
+}
+
 static int start_runtime_loop(Client manager) {
     int ret                     = EXIT_SUCCESS;
     bool exit_requested_by_user = false;
     while (ret == EXIT_SUCCESS && !client_should_stop(manager)) {
-        if (!next_command()) {
+        if (!next_user_command()) {
             exit_requested_by_user = true;
             break;
         }
 
         ServerCommand cmd = {0};
         get_command_args(&cmd);
-        int res = send_command_to_server(manager, &cmd);
-        switch (res) {
-            case SERVER_COMMAND_SUCCESS:
-                printf("Server response: success\n");
-                break;
-            case INVALID_SERVER_COMMAND_ARGS:
-                printf("Server response: invalid command arguments\n");
-                break;
-            case SERVER_INTERNAL_ERROR:
-                printf("Server response: internal error\n");
-                break;
-            case NO_CONNECTION:
-                printf("No connection to the server\n");
-                ret = EXIT_FAILURE;
-                break;
-            default:
-                printf("Unknown server response: %d\n", res);
-                ret = EXIT_FAILURE;
-                break;
-        }
+        ServerCommandResult resp = send_command_to_server(manager, &cmd);
+        handle_server_response(resp, &ret);
     }
 
     if (ret == EXIT_SUCCESS && !exit_requested_by_user) {

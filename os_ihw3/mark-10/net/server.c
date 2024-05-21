@@ -160,7 +160,6 @@ static void* managers_handler(void* unused) {
             }
             break;
         }
-
         size_t manager_index = (size_t)-1;
         if (!nonblocking_poll_managers(&server, &cmd, &manager_index)) {
             fputs("> Could not get next command\n", stderr);
@@ -169,35 +168,29 @@ static void* managers_handler(void* unused) {
         if (manager_index == (size_t)-1) {
             continue;
         }
-
         const ClientMetaInfo* const info = &server.managers_info[manager_index];
-
-        int ret = snprintf(log.message, sizeof(log.message),
-                           "> Received command to shutdown "
-                           "client[address=%s:%u]\n"
-                           "  from manager[address=%s:%s | %s:%s]\n",
-                           cmd.ip_address, cmd.port, info->host, info->port, info->numeric_host,
-                           info->numeric_port);
+        int ret                          = snprintf(log.message, sizeof(log.message),
+                                                    "> Received command to shutdown "
+                                                                             "client[address=%s:%u]\n"
+                                                                             "  from manager[address=%s:%s | %s:%s]\n",
+                                                    cmd.ip_address, cmd.port, info->host, info->port, info->numeric_host,
+                                                    info->numeric_port);
         assert(ret > 0);
         assert(log.message[0] != '\0');
         print_and_enqueue_log(&log);
-
         ServerCommandResult res = execute_command(&server, &cmd);
-
-        ret = snprintf(log.message, sizeof(log.message),
-                       "> Executed shutdown command on "
-                       "client at address %s:%u\n"
-                       "  Server result: %s\n",
-                       cmd.ip_address, cmd.port, server_command_result_to_string(res));
+        ret                     = snprintf(log.message, sizeof(log.message),
+                                           "> Executed shutdown command on "
+                                                               "client at address %s:%u\n"
+                                                               "  Server result: %s\n",
+                                           cmd.ip_address, cmd.port, server_command_result_to_string(res));
         assert(ret > 0);
         assert(log.message[0] != '\0');
         print_and_enqueue_log(&log);
-
         if (!send_command_result_to_manager(&server, res, manager_index)) {
             fputs("> Could not send command result to manger\n", stderr);
             break;
         }
-
         ret = snprintf(log.message, sizeof(log.message),
                        "> Send command result back to "
                        "manager[address=%s:%s | %s:%s]\n",
