@@ -597,4 +597,4 @@ static int start_runtime_loop(Client manager) {
 ![img10](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img10.png?raw=true)
 
 #### Завершение работы системы при нажатии сочетания клавиш Ctrl-C в консоли сервера. Сервер посылает сигнал о завершении клиентам, ждёт некоторое время, и после этого закрывает все сокеты и деинициализирует ресурсы. Все клиенты и сервер завершили работу.
-![img11](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-11/images/img11.png?raw=true)
+![img11](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw3/mark-10/images/img11.png?raw=true)
