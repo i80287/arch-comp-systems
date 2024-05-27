@@ -65,7 +65,7 @@ static int start_runtime_loop(Client worker) {
 
 static int run_worker(const char* server_ip_address, uint16_t fserver_port) {
     Client worker;
-    if (!init_client(worker, server_ip_address, fserver_port, SECOND_STAGE_WORKER_CLIENT)) {
+    if (!init_client(worker, server_ip_address, fserver_port, COMPONENT_TYPE_SECOND_STAGE_WORKER)) {
         return EXIT_FAILURE;
     }
 

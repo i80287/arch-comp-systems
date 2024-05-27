@@ -1,90 +1,83 @@
 #include "client-tools.h"
 
-#include <arpa/inet.h>   // for htons, inet_addr
-#include <errno.h>       // for EAGAIN, EWOULDBLOCK, errno
-#include <netdb.h>       // for getnameinfo, gai_strerror, NI_NUM...
-#include <netinet/in.h>  // for sockaddr_in, IPPROTO_TCP, in_addr
-#include <netinet/udp.h>
-#include <stdint.h>      // for uint16_t, uint32_t
-#include <stdio.h>       // for perror, printf, fprintf, stderr
-#include <sys/socket.h>  // for setsockopt, connect, recv, sendto, SOL_SOCKET, SO_KEEPALIVE
-#include <unistd.h>      // for close, ssize_t
+#include <arpa/inet.h>
 #include <assert.h>
-#include "../util/config.h"  // for MAX_SLEEP_TIME
+#include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/udp.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "../util/config.h"
 #include "client-tools.h"
-#include "net-config.h"  // for NET_BUFFER_SIZE, is_shutdown_message
+#include "net-config.h"
 
-static bool send_client_type_info(int socket_fd, struct sockaddr_in* server_sock_addr,
-                                  ClientType type) {
-    union {
-        char bytes[NET_BUFFER_SIZE];
-        ClientType type;
-    } buffer;
-    buffer.type = type;
-    if (sendto(socket_fd, buffer.bytes, sizeof(type), MSG_NOSIGNAL,
-               (const struct sockaddr*)server_sock_addr,
-               sizeof(*server_sock_addr)) != sizeof(type)) {
-        perror("sendto[while sending client type to the server]");
+static bool send_client_type_info(const Client client) {
+    const UDPMessage message = {
+        .sender_type           = client->type,
+        .receiver_type         = COMPONENT_TYPE_SERVER,
+        .message_type          = MESSAGE_TYPE_NEW_CLIENT,
+        .message_content.bytes = {0},
+    };
+    if (sendto(client->client_sock_fd, &message, sizeof(message), 0,
+               (const struct sockaddr*)&client->server_broadcast_sock_addr,
+               sizeof(client->server_broadcast_sock_addr)) != sizeof(message)) {
+        app_perror("sendto");
         return false;
     }
 
-    printf("Sent type \"%s\" of this client to the server\n", client_type_to_string(type));
+    printf("Sent type \"%s\" of this client to the server\n",
+           component_type_to_string(client->type));
     return true;
 }
 
-static bool connect_to_server(int socket_fd, struct sockaddr_in* server_sock_addr,
-                              const char* server_ip, uint16_t server_port, ClientType type) {
-    server_sock_addr->sin_family      = AF_INET;
-    server_sock_addr->sin_port        = htons(server_port);
-    server_sock_addr->sin_addr.s_addr = inet_addr(server_ip);
-
-    bool failed = connect(socket_fd, (const struct sockaddr*)server_sock_addr,
-                          sizeof(*server_sock_addr)) == -1;
-    if (failed) {
-        perror("connect");
+static bool setup_client(int client_sock_fd, struct sockaddr_in* client_sa, const char* server_ip,
+                         uint16_t server_port) {
+    if (-1 == setsockopt(client_sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){true}, sizeof(int))) {
+        app_perror("setsockopt[SOL_SOCKET,SO_REUSEADDR]");
         return false;
     }
-
-    if (!send_client_type_info(socket_fd, server_sock_addr, type)) {
-        fprintf(stderr, "Could not send self type %d to the server %s:%u\n", type, server_ip,
-                server_port);
-        return false;
-    }
-
-    return true;
-}
-
-bool init_client(Client client, const char* server_ip, uint16_t server_port, ClientType type) {
-    client->type = type;
-    int sock_fd = client->client_sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock_fd == -1) {
-        perror("socket");
-        return false;
-    }
-
     // Set socket to allow sending broadcast messages
-    if (-1 == setsockopt(sock_fd, SOL_SOCKET, SO_BROADCAST, &(bool){true}, sizeof(bool))) {
-        perror("setsockopt");
-        close(sock_fd);
+    if (-1 == setsockopt(client_sock_fd, SOL_SOCKET, SO_BROADCAST, &(int){true}, sizeof(int))) {
+        app_perror("setsockopt[SOL_SOCKET,SO_BROADCAST]");
         return false;
     }
 
-    client->server_broadcast_sock_addr = (struct sockaddr_in){
+    *client_sa = (struct sockaddr_in){
         .sin_family      = AF_INET,
         .sin_port        = htons(server_port),
         .sin_addr.s_addr = inet_addr(server_ip),
     };
+    if (-1 == bind(client_sock_fd, (const struct sockaddr*)client_sa, sizeof(*client_sa))) {
+        app_perror("bind");
+        return false;
+    }
+    return true;
+}
+
+bool init_client(Client client, const char* server_ip, uint16_t server_port, ComponentType type) {
+    client->type = type;
+    int sock_fd = client->client_sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock_fd == -1) {
+        app_perror("socket");
+        return false;
+    }
+    if (!setup_client(sock_fd, &client->server_broadcast_sock_addr, server_ip, server_port) ||
+        !send_client_type_info(client)) {
+        close(sock_fd);
+        return false;
+    }
+
     return true;
 }
 
 void deinit_client(Client client) {
     int sock_fd = client->client_sock_fd;
-    if (sock_fd != -1) {
-        if (shutdown(sock_fd, SHUT_RDWR) != 0) {
-            perror("at deinit_client(Client) at shutdown(int,int)");
-        }
-        close(sock_fd);
-    }
+    assert(sock_fd != -1);
+    close(sock_fd);
 }
 
 void print_sock_addr_info(const struct sockaddr* socket_address,
@@ -111,7 +104,7 @@ void print_sock_addr_info(const struct sockaddr* socket_address,
 }
 
 static bool client_handle_errno(const char* cause) {
-    uint32_t errno_val = (uint32_t)(errno);
+    int errno_val = errno;
     switch (errno_val) {
         case EAGAIN:
         case ENETDOWN:
@@ -127,45 +120,28 @@ static bool client_handle_errno(const char* cause) {
                 "+---------------------------------------------+\n"
                 "| Server stopped connection. Code: %-10u |\n"
                 "+---------------------------------------------+\n",
-                errno_val);
+                (uint32_t)errno_val);
             return true;
         default:
-            perror(cause);
+            app_perror(cause);
             return false;
     }
 }
 
 bool client_should_stop(const Client client) {
-    char buffer[NET_BUFFER_SIZE] = {0};
-    ssize_t bytes_read           = recv(client->client_sock_fd, buffer, sizeof(buffer),
-                                        MSG_DONTWAIT | MSG_PEEK | MSG_NOSIGNAL);
-    if (bytes_read < 0) {
+    UDPMessage message = {0};
+    ssize_t bytes_read = recv(client->client_sock_fd, &message, sizeof(message),
+                              MSG_DONTWAIT | MSG_PEEK | MSG_NOSIGNAL);
+    if (bytes_read != sizeof(UDPMessage)) {
         const int errno_val = errno;
         if (errno_val == EAGAIN || errno_val == EWOULDBLOCK) {
             return false;
         }
+
         client_handle_errno("client_should_stop");
         return true;
     }
-
-    return is_shutdown_message(buffer, (size_t)bytes_read);
-}
-
-static void handle_recv_error(const char* bytes, ssize_t read_bytes) {
-    if (read_bytes > 0) {
-        if (is_shutdown_message(bytes, (size_t)read_bytes)) {
-            printf(
-                "+------------------------------------------+\n"
-                "| Received shutdown signal from the server |\n"
-                "+------------------------------------------+\n");
-            return;
-        }
-
-        fprintf(stderr, "Read %zu unknown bytes: \"%.*s\"\n", (size_t)read_bytes, (int)read_bytes,
-                bytes);
-    }
-
-    client_handle_errno("recv");
+    return message.message_type == MESSAGE_TYPE_SHUTDOWN_MESSAGE;
 }
 
 Pin receive_new_pin() {
@@ -183,50 +159,72 @@ bool check_pin_crookness(Pin pin) {
     return x & 1;
 #endif
 }
-bool send_pin(int sock_fd, const struct sockaddr_in* sock_addr, Pin pin) {
-    bool success = sendto(sock_fd, &pin, sizeof(pin), MSG_NOSIGNAL,
-                          (const struct sockaddr*)sock_addr, sizeof(*sock_addr)) == sizeof(pin);
+static bool send_pin(const Client worker, Pin pin) {
+    const UDPMessage message = {
+        .sender_type         = worker->type,
+        .receiver_type       = COMPONENT_TYPE_SERVER,
+        .message_type        = MESSAGE_TYPE_PIN_TRANSFERRING,
+        .message_content.pin = pin,
+    };
+    bool success = sendto(worker->client_sock_fd, &message, sizeof(message), MSG_NOSIGNAL,
+                          (const struct sockaddr*)&worker->server_broadcast_sock_addr,
+                          sizeof(worker->server_broadcast_sock_addr)) == sizeof(message);
     if (!success) {
         client_handle_errno("sendto");
     }
     return success;
 }
-bool send_not_croocked_pin(Client worker, Pin pin) {
+bool send_not_croocked_pin(const Client worker, Pin pin) {
     assert(is_worker(worker));
-    return send_pin(worker->client_sock_fd, &worker->server_broadcast_sock_addr, pin);
+    return send_pin(worker, pin);
 }
-
-static bool receive_data(int sock_fd, void* buffer, size_t buffer_size) {
-    ssize_t read_bytes;
+static bool receive_pin(const Client worker, Pin* rec_pin) {
+    UDPMessage message = {0};
     do {
-        read_bytes = recv(sock_fd, buffer, buffer_size, MSG_NOSIGNAL);
-        if ((size_t)read_bytes != buffer_size && read_bytes != 0) {
-            handle_recv_error(buffer, read_bytes);
+        printf("calling recv\n");
+        ssize_t read_bytes = recv(worker->client_sock_fd, &message, sizeof(message), MSG_NOSIGNAL);
+        if (read_bytes == 0) {
+            continue;
+        }
+        if ((size_t)read_bytes != sizeof(message)) {
+            client_handle_errno("recv");
             return false;
         }
-    } while (read_bytes == 0);
+        if (message.sender_type != COMPONENT_TYPE_SERVER) {
+            continue;
+        }
+        switch (message.message_type) {
+            case MESSAGE_TYPE_PIN_TRANSFERRING:
+                break;
+            case MESSAGE_TYPE_SHUTDOWN_MESSAGE:
+                printf(
+                    "+------------------------------------------+\n"
+                    "| Received shutdown signal from the server |\n"
+                    "+------------------------------------------+\n");
+                return false;
+            default:
+                continue;
+        }
+    } while (message.receiver_type != worker->type);
+    *rec_pin = message.message_content.pin;
     return true;
 }
-
-bool receive_pin(int sock_fd, Pin* rec_pin) {
-    return receive_data(sock_fd, rec_pin, sizeof(*rec_pin));
-}
-bool receive_not_crooked_pin(Client worker, Pin* rec_pin) {
+bool receive_not_crooked_pin(const Client worker, Pin* rec_pin) {
     assert(is_worker(worker));
-    return receive_pin(worker->client_sock_fd, rec_pin);
+    return receive_pin(worker, rec_pin);
 }
 void sharpen_pin(Pin pin) {
     (void)pin;
     uint32_t sleep_time = (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) + MIN_SLEEP_TIME;
     sleep(sleep_time);
 }
-bool send_sharpened_pin(Client worker, Pin pin) {
+bool send_sharpened_pin(const Client worker, Pin pin) {
     assert(is_worker(worker));
-    return send_pin(worker->client_sock_fd, &worker->server_broadcast_sock_addr, pin);
+    return send_pin(worker, pin);
 }
-bool receive_sharpened_pin(Client worker, Pin* rec_pin) {
+bool receive_sharpened_pin(const Client worker, Pin* rec_pin) {
     assert(is_worker(worker));
-    return receive_pin(worker->client_sock_fd, rec_pin);
+    return receive_pin(worker, rec_pin);
 }
 bool check_sharpened_pin_quality(Pin sharpened_pin) {
     uint32_t sleep_time = (uint32_t)rand() % (MAX_SLEEP_TIME - MIN_SLEEP_TIME) + MIN_SLEEP_TIME;

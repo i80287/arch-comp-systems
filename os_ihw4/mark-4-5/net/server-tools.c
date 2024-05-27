@@ -1,19 +1,21 @@
 #include "server-tools.h"
 
-#include <arpa/inet.h>              // for htonl, htons
-#include <assert.h>                 // for assert
-#include <bits/socket-constants.h>  // for SOL_SOCKET, SO_KEEPALIVE
-#include <netdb.h>                  // for gai_strerror, getnameinfo, NI_NUM...
-#include <netinet/in.h>             // for sockaddr_in, IPPROTO_TCP, INADDR_ANY
-#include <stdbool.h>                // for false, bool, true
-#include <stdint.h>                 // for uint16_t, uint32_t
-#include <stdio.h>                  // for perror, fprintf, size_t, stderr
-#include <string.h>                 // for memset, strcpy, memcpy
-#include <sys/socket.h>             // for setsockopt, accept, bind
-#include <unistd.h>                 // for close
+#include <arpa/inet.h>
+#include <assert.h>
+#include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-#include "../util/config.h"  // for MAX_SLEEP_TIME
-#include "net-config.h"      // for SHUTDOWN_MESSAGE_SIZE, SHUTDOWN_M...
+#include "../util/config.h"
+#include "net-config.h"
 #include "server-log.h"
 
 typedef enum HandleResult {
@@ -38,32 +40,46 @@ static HandleResult handle_socket_op_error(const char* cause) {
         case EHOSTUNREACH:
             return DEAD_CLIENT_SOCKET;
         default:
-            perror(cause);
+            app_perror(cause);
             return UNKNOWN_SOCKET_ERROR;
     }
 }
 
-static bool setup_server(int server_sock_fd, struct sockaddr_in* server_sock_addr,
-                         uint16_t server_port) {
-    server_sock_addr->sin_family      = AF_INET;
-    server_sock_addr->sin_port        = htons(server_port);
-    server_sock_addr->sin_addr.s_addr = htonl(INADDR_ANY);
+static bool is_socket_alive(int sock_fd) {
+    int error     = 0;
+    socklen_t len = sizeof(error);
+    int retval    = getsockopt(sock_fd, SOL_SOCKET, SO_ERROR, &error, &len);
+    if (retval != 0) {
+        errno = retval;
+        app_perror("getsockopt");
+        return false;
+    }
+    if (error != 0) {
+        errno = error;
+        handle_socket_op_error("is_socket_alive");
+        return false;
+    }
+    return true;
+}
 
-    if (setsockopt(server_sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){true}, sizeof(int)) == -1) {
-        perror("setsockopt[SOL_SOCKET,SO_REUSEADDR]");
+static bool setup_server(int server_sock_fd, struct sockaddr_in* server_sa, uint16_t server_port) {
+    if (-1 == setsockopt(server_sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){true}, sizeof(int))) {
+        app_perror("setsockopt[SOL_SOCKET,SO_REUSEADDR]");
+        return false;
+    }
+    // Set socket to allow sending broadcast messages
+    if (-1 == setsockopt(server_sock_fd, SOL_SOCKET, SO_BROADCAST, &(int){true}, sizeof(int))) {
+        app_perror("setsockopt[SOL_SOCKET,SO_BROADCAST]");
         return false;
     }
 
-    /* Set socket to allow broadcast */
-    if (setsockopt(server_sock_fd, SOL_SOCKET, SO_BROADCAST, &(int){true}, sizeof(int)) == -1) {
-        perror("setsockopt[SOL_SOCKET,SO_BROADCAST]");
-        return false;
-    }
-
-    bool bind_failed = bind(server_sock_fd, (const struct sockaddr*)server_sock_addr,
-                            sizeof(*server_sock_addr)) == -1;
-    if (bind_failed) {
-        perror("bind");
+    *server_sa = (struct sockaddr_in){
+        .sin_family      = AF_INET,
+        .sin_port        = htons(server_port),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
+    if (-1 == bind(server_sock_fd, (const struct sockaddr*)server_sa, sizeof(*server_sa))) {
+        app_perror("bind");
         return false;
     }
 
@@ -71,95 +87,33 @@ static bool setup_server(int server_sock_fd, struct sockaddr_in* server_sock_add
 }
 
 bool init_server(Server server, uint16_t server_port) {
-    int err_code            = 0;
-    const char* error_cause = "";
     memset(server, 0, sizeof(*server));
-
-    err_code = pthread_mutex_init(&server->first_workers_mutex, NULL);
-    if (err_code != 0) {
-        error_cause = "pthread_mutex_init";
-        goto init_server_cleanup_empty;
-    }
-    err_code = pthread_mutex_init(&server->second_workers_mutex, NULL);
-    if (err_code != 0) {
-        error_cause = "pthread_mutex_init";
-        goto init_server_cleanup_mutex_1;
-    }
-    err_code = pthread_mutex_init(&server->third_workers_mutex, NULL);
-    if (err_code != 0) {
-        error_cause = "pthread_mutex_init";
-        goto init_server_cleanup_mutex_2;
-    }
     server->sock_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (server->sock_fd == -1) {
-        error_cause = "socket";
-        err_code    = errno;
-        goto init_server_cleanup_mutex_3;
+        app_perror("socket");
+        return false;
     }
     if (!setup_server(server->sock_fd, &server->sock_addr, server_port)) {
-        error_cause = "setup_server";
-        goto init_server_cleanup_mutex_3_socket;
+        close(server->sock_fd);
+        return false;
     }
-    memset(server->first_workers_fds, -1, sizeof(int) * MAX_NUMBER_OF_FIRST_WORKERS);
-    memset(server->second_workers_fds, -1, sizeof(int) * MAX_NUMBER_OF_SECOND_WORKERS);
-    memset(server->third_workers_fds, -1, sizeof(int) * MAX_NUMBER_OF_THIRD_WORKERS);
     return true;
-
-init_server_cleanup_mutex_3_socket:
-    close(server->sock_fd);
-init_server_cleanup_mutex_3:
-    pthread_mutex_destroy(&server->third_workers_mutex);
-init_server_cleanup_mutex_2:
-    pthread_mutex_destroy(&server->second_workers_mutex);
-init_server_cleanup_mutex_1:
-    pthread_mutex_destroy(&server->first_workers_mutex);
-init_server_cleanup_empty:
-    if (err_code != 0) {
-        errno = err_code;
-        perror(error_cause);
-    }
-    return false;
-}
-
-static void close_fds(int fds[], size_t array_max_size) {
-    for (size_t i = 0; i < array_max_size; i++) {
-        if (fds[i] != -1) {
-            close(fds[i]);
-        }
-    }
 }
 
 void deinit_server(Server server) {
-    close_fds(server->third_workers_fds, MAX_NUMBER_OF_THIRD_WORKERS);
-    close_fds(server->second_workers_fds, MAX_NUMBER_OF_SECOND_WORKERS);
-    close_fds(server->first_workers_fds, MAX_NUMBER_OF_FIRST_WORKERS);
-    close(server->sock_fd);
-    pthread_mutex_destroy(&server->third_workers_mutex);
-    pthread_mutex_destroy(&server->second_workers_mutex);
-    pthread_mutex_destroy(&server->first_workers_mutex);
-}
-
-static bool receive_client_type(int client_sock_fd, ClientType* type) {
-    union {
-        char bytes[NET_BUFFER_SIZE];
-        ClientType type;
-    } buffer = {0};
-
-    bool received_type;
-    int tries = 16;
-    do {
-        received_type =
-            recv(client_sock_fd, buffer.bytes, sizeof(*type), MSG_DONTWAIT) == sizeof(*type);
-    } while (!received_type && --tries > 0);
-
-    if (!received_type) {
-        printf("TOO BAD\n");
-        return false;
+    int sock_fd = server->sock_fd;
+    assert(sock_fd != -1);
+    if (close(sock_fd) == -1) {
+        app_perror("close");
     }
-
-    *type = buffer.type;
-    return true;
 }
+
+typedef struct ClientMetaInfo {
+    char host[48];
+    char port[16];
+    char numeric_host[48];
+    char numeric_port[16];
+} ClientMetaInfo;
 
 static void fill_client_metainfo(ClientMetaInfo* info, const struct sockaddr_in* client_addr) {
     int gai_err = getnameinfo((const struct sockaddr*)client_addr, sizeof(*client_addr), info->host,
@@ -180,447 +134,196 @@ static void fill_client_metainfo(ClientMetaInfo* info, const struct sockaddr_in*
     }
 }
 
-static size_t insert_new_client_into_arrays(struct sockaddr_in clients_addrs[], int clients_fds[],
-                                            volatile size_t* array_size,
-                                            const size_t max_array_size,
-                                            ClientMetaInfo clients_info[],
-                                            const struct sockaddr_in* client_addr,
-                                            int client_sock_fd) {
-    assert(*array_size <= max_array_size);
-    for (size_t i = 0; i < max_array_size; i++) {
-        if (clients_fds[i] != -1) {
-            continue;
-        }
-
-        assert(array_size);
-        assert(*array_size < max_array_size);
-        assert(client_addr);
-        assert(clients_addrs);
-        clients_addrs[i] = *client_addr;
-        assert(array_size);
-        (*array_size)++;
-        fill_client_metainfo(&clients_info[i], client_addr);
-        assert(clients_fds);
-        clients_fds[i] = client_sock_fd;
-        return i;
-    }
-
-    return (size_t)-1;
-}
-
-static void handle_log(Server server, const ServerLog* log) {
+static void handle_log(const Server server, const ServerLog* log) {
     (void)server;
     assert(log->message[0] != '\0');
     puts(log->message);
 }
 
-static bool handle_new_client(Server server, const struct sockaddr_storage* storage,
-                              socklen_t client_addrlen, int client_sock_fd) {
-    if (client_addrlen != sizeof(struct sockaddr_in)) {
-        fprintf(stderr, "> Unknown client of size %u\n", client_addrlen);
-        return false;
+static const struct sockaddr_in* cast_to_sockaddr_in(
+    const struct sockaddr_storage* broadcast_address_storage, socklen_t broadcast_address_size) {
+    return broadcast_address_size == sizeof(struct sockaddr_in)
+               ? (const struct sockaddr_in*)broadcast_address_storage
+               : NULL;
+}
+
+static bool send_message(const Server server, const UDPMessage* message) {
+    bool ok = sendto(server->sock_fd, message, sizeof(*message), 0,
+                     (const struct sockaddr*)&server->sock_addr,
+                     sizeof(server->sock_addr)) == sizeof(*message);
+    if (!ok) {
+        app_perror("sendto");
     }
+    return ok;
+}
 
-    struct sockaddr_in client_addr = {0};
-    memcpy(&client_addr, storage, sizeof(client_addr));
-
-    ClientType type = CLIENT_TYPE_SENTINEL;
-    if (!receive_client_type(client_sock_fd, &type)) {
-        fprintf(stderr, "> Could not get client type at port %u\n", client_addr.sin_port);
-        return false;
-    }
-
-    const ClientMetaInfo* info_array = NULL;
-    size_t insert_index              = (size_t)-1;
-    switch (type) {
-        case FIRST_STAGE_WORKER_CLIENT: {
-            if (!server_lock_first_mutex(server)) {
-                return false;
-            }
-            insert_index = insert_new_client_into_arrays(
-                server->first_workers_addrs, server->first_workers_fds,
-                &server->first_workers_arr_size, MAX_NUMBER_OF_FIRST_WORKERS,
-                server->first_workers_info, &client_addr, client_sock_fd);
-            if (!server_unlock_first_mutex(server)) {
-                return false;
-            }
-            info_array = server->first_workers_info;
-        } break;
-        case SECOND_STAGE_WORKER_CLIENT: {
-            if (!server_lock_second_mutex(server)) {
-                return false;
-            }
-            insert_index = insert_new_client_into_arrays(
-                server->second_workers_addrs, server->second_workers_fds,
-                &server->second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS,
-                server->second_workers_info, &client_addr, client_sock_fd);
-            if (!server_unlock_second_mutex(server)) {
-                return false;
-            }
-            info_array = server->second_workers_info;
-        } break;
-        case THIRD_STAGE_WORKER_CLIENT: {
-            if (!server_lock_third_mutex(server)) {
-                return false;
-            }
-            insert_index = insert_new_client_into_arrays(
-                server->third_workers_addrs, server->third_workers_fds,
-                &server->third_workers_arr_size, MAX_NUMBER_OF_THIRD_WORKERS,
-                server->third_workers_info, &client_addr, client_sock_fd);
-            if (!server_unlock_third_mutex(server)) {
-                return false;
-            }
-            info_array = server->third_workers_info;
-        } break;
-        default:
-            fprintf(stderr, "> Unknown client type: %d\n", type);
-            return false;
-    }
-
-    const char* client_type_str = client_type_to_string(type);
-    if (insert_index == (size_t)-1) {
-        fprintf(stderr,
-                "> Can't accept new client: limit for client "
-                "of type \"%s\" has been reached\n",
-                client_type_str);
-        return false;
-    }
-
+static bool server_handle_pin_from_first_stage_worker(const Server server, Pin pin) {
     ServerLog log;
-    const ClientMetaInfo* info = &info_array[insert_index];
+    int ret = snprintf(log.message, sizeof(log.message),
+                       "> Transferring pin[pin_id=%d] to the second stage workers\n", pin.pin_id);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
+    handle_log(server, &log);
+
+    UDPMessage message = {
+        .sender_type         = COMPONENT_TYPE_SERVER,
+        .receiver_type       = COMPONENT_TYPE_SECOND_STAGE_WORKER,
+        .message_type        = MESSAGE_TYPE_PIN_TRANSFERRING,
+        .message_content.pin = pin,
+    };
+    return send_message(server, &message);
+}
+
+static bool server_handle_pin_from_second_stage_worker(const Server server, Pin pin) {
+    ServerLog log;
+    int ret = snprintf(log.message, sizeof(log.message),
+                       "> Transferring pin[pin_id=%d] to the third stage workers\n", pin.pin_id);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
+    handle_log(server, &log);
+
+    UDPMessage message = {
+        .sender_type         = COMPONENT_TYPE_SERVER,
+        .receiver_type       = COMPONENT_TYPE_THIRD_STAGE_WORKER,
+        .message_type        = MESSAGE_TYPE_PIN_TRANSFERRING,
+        .message_content.pin = pin,
+    };
+    return send_message(server, &message);
+}
+
+static void server_handle_invalid_pin_source(ComponentType pin_source, const Server server, Pin pin,
+                                             const ClientMetaInfo* info) {
+    ServerLog log;
+    int ret = snprintf(log.message, sizeof(log.message),
+                       "> Error: invalid source %s[address=%s:%s | %s:%s] of the pin[pin_id=%d]\n",
+                       component_type_to_string(pin_source), info->host, info->port,
+                       info->numeric_host, info->numeric_port, pin.pin_id);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
+    handle_log(server, &log);
+}
+
+static bool server_handle_pin_transferring(const Server server, const UDPMessage* message,
+                                           const ClientMetaInfo* info) {
+    if (message->receiver_type != COMPONENT_TYPE_SERVER) {
+        return true;
+    }
+
+    Pin pin = message->message_content.pin;
+    ServerLog log;
+    int ret = snprintf(log.message, sizeof(log.message),
+                       "> Received pin[pin_id=%d] from the\n> %s[address=%s:%s | %s:%s]\n",
+                       pin.pin_id, component_type_to_string(message->sender_type), info->host,
+                       info->port, info->numeric_host, info->numeric_port);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
+    handle_log(server, &log);
+    if (message->receiver_type != COMPONENT_TYPE_SERVER) {
+        return true;
+    }
+
+    switch (message->sender_type) {
+        case COMPONENT_TYPE_FIRST_STAGE_WORKER:
+            return server_handle_pin_from_first_stage_worker(server, pin);
+        case COMPONENT_TYPE_SECOND_STAGE_WORKER:
+            return server_handle_pin_from_second_stage_worker(server, pin);
+        default:
+            server_handle_invalid_pin_source(message->sender_type, server, pin, info);
+            return true;
+    }
+}
+
+static void server_handle_new_client(const Server server, const UDPMessage* message,
+                                     const ClientMetaInfo* info) {
+    const char* client_type_str = component_type_to_string(message->sender_type);
+    ServerLog log;
     int ret =
         snprintf(log.message, sizeof(log.message),
-                 "> Accepted new client with type \"%s\"[address=%s:%s | %s:%s]\n", client_type_str,
-                 info->host, info->port, info->numeric_host, info->numeric_port);
-    assert(ret > 0);
-    assert(log.message[0] != '\0');
+                 "> New client with type \"%s\"[address=%s:%s | %s:%s] sent signal of presence\n",
+                 client_type_str, info->host, info->port, info->numeric_host, info->numeric_port);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
     handle_log(server, &log);
-    return true;
 }
 
-static void send_shutdown_signal_to_one_impl(int sock_fd, const ClientMetaInfo* info);
+static void server_handle_shutdown_signal(const Server server, const UDPMessage* message,
+                                          const ClientMetaInfo* info) {
+    ServerLog log = {0};
+    int ret       = snprintf(log.message, sizeof(log.message),
+                             "> Warning: received shutdown signal from %s[address=%s:%s | %s:%s]\n",
+                             component_type_to_string(message->sender_type), info->host, info->port,
+                             info->numeric_host, info->numeric_port);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
+    handle_log(server, &log);
+}
 
-bool server_accept_client(Server server) {
-    struct sockaddr_storage storage;
-    socklen_t client_addrlen = sizeof(storage);
-    int client_sock_fd       = accept(server->sock_fd, (struct sockaddr*)&storage, &client_addrlen);
-    if (client_sock_fd == -1) {
-        if (errno != EINTR) {
-            perror("accept");
-        }
+static void server_handle_invalid_message_type(const Server server, const UDPMessage* message,
+                                               const ClientMetaInfo* info) {
+    ServerLog log;
+    int ret = snprintf(
+        log.message, sizeof(log.message),
+        "> Error: invalid message type %s[value=%u] from the\n> %s[address=%s:%s | %s:%s]\n",
+        message_type_to_string(message->message_type), (uint32_t)message->message_type,
+        component_type_to_string(message->sender_type), info->host, info->port, info->numeric_host,
+        info->numeric_port);
+    if (ret <= 0) {
+        app_perror("snprintf");
+    }
+    handle_log(server, &log);
+}
+
+bool nonblocking_poll(const Server server) {
+    UDPMessage message                                = {0};
+    struct sockaddr_storage broadcast_address_storage = {0};
+    socklen_t broadcast_address_size                  = sizeof(broadcast_address_storage);
+    ssize_t received_size =
+        recvfrom(server->sock_fd, &message, sizeof(message), 0,
+                 (struct sockaddr*)&broadcast_address_storage, &broadcast_address_size);
+    if (received_size < 0) {
+        app_perror("recvfrom");
         return false;
     }
 
-    if (!handle_new_client(server, &storage, client_addrlen, client_sock_fd)) {
-        send_shutdown_signal_to_one_impl(client_sock_fd, NULL);
-        close(client_sock_fd);
+    const struct sockaddr_in* sock_addr =
+        cast_to_sockaddr_in(&broadcast_address_storage, broadcast_address_size);
+    if (sock_addr == NULL) {
+        fprintf(stderr, "> Unknown message sender of size %u\n", broadcast_address_size);
+        return true;
     }
-    return true;
-}
 
-static void send_shutdown_signal_to_one_impl(int sock_fd, const ClientMetaInfo* info) {
-    const char* host         = info ? info->host : "unknown host";
-    const char* port         = info ? info->port : "unknown port";
-    const char* numeric_host = info ? info->numeric_host : "unknown host";
-    const char* numeric_port = info ? info->numeric_port : "unknown port";
-    if (send(sock_fd, SHUTDOWN_MESSAGE, SHUTDOWN_MESSAGE_SIZE, MSG_NOSIGNAL) !=
-        SHUTDOWN_MESSAGE_SIZE) {
-        perror("send");
-        fprintf(stderr,
-                "> Could not send shutdown signal to the "
-                "client[address=%s:%s | %s:%s]\n",
-                host, port, numeric_host, numeric_port);
-    } else {
-        printf(
-            "> Sent shutdown signal to the "
-            "client[address=%s:%s | %s:%s]\n\n",
-            host, port, numeric_host, numeric_port);
-        if (shutdown(sock_fd, SHUT_RDWR) == -1) {
-            handle_socket_op_error("shutdown[send_shutdown_signal_to_one_impl]");
-        }
-    }
-}
-
-void send_shutdown_signal_to_one_client(const Server server, ClientType type, size_t index) {
-    const int* fds_arr;
-    const ClientMetaInfo* infos_arr;
-    switch (type) {
-        case FIRST_STAGE_WORKER_CLIENT:
-            assert(index < MAX_NUMBER_OF_FIRST_WORKERS);
-            fds_arr   = server->first_workers_fds;
-            infos_arr = server->first_workers_info;
+    ClientMetaInfo info;
+    fill_client_metainfo(&info, sock_addr);
+    switch (message.message_type) {
+        case MESSAGE_TYPE_PIN_TRANSFERRING:
+            return server_handle_pin_transferring(server, &message, &info);
+        case MESSAGE_TYPE_NEW_CLIENT:
+            server_handle_new_client(server, &message, &info);
             break;
-        case SECOND_STAGE_WORKER_CLIENT:
-            assert(index < MAX_NUMBER_OF_SECOND_WORKERS);
-            fds_arr   = server->second_workers_fds;
-            infos_arr = server->second_workers_info;
-            break;
-        case THIRD_STAGE_WORKER_CLIENT:
-            assert(index < MAX_NUMBER_OF_THIRD_WORKERS);
-            fds_arr   = server->third_workers_fds;
-            infos_arr = server->third_workers_info;
+        case MESSAGE_TYPE_SHUTDOWN_MESSAGE:
+            server_handle_shutdown_signal(server, &message, &info);
             break;
         default:
-            return;
-    }
-
-    int sock_fd = fds_arr[index];
-    if (sock_fd == -1) {
-        return;
-    }
-
-    send_shutdown_signal_to_one_impl(sock_fd, &infos_arr[index]);
-}
-
-static void send_shutdown_signal_to_all_in_arr_impl(const int sock_fds[],
-                                                    const ClientMetaInfo clients_info[],
-                                                    size_t max_array_size) {
-    for (size_t i = 0; i < max_array_size; i++) {
-        int sock_fd = sock_fds[i];
-        if (sock_fd != -1) {
-            send_shutdown_signal_to_one_impl(sock_fd, &clients_info[i]);
-        }
-    }
-}
-
-void send_shutdown_signal_to_first_workers(Server server) {
-    if (server_lock_first_mutex(server)) {
-        send_shutdown_signal_to_all_in_arr_impl(
-            server->first_workers_fds, server->first_workers_info, MAX_NUMBER_OF_FIRST_WORKERS);
-        server->first_workers_arr_size = 0;
-        server_unlock_first_mutex(server);
-    }
-}
-
-void send_shutdown_signal_to_second_workers(Server server) {
-    if (server_lock_second_mutex(server)) {
-        send_shutdown_signal_to_all_in_arr_impl(
-            server->second_workers_fds, server->second_workers_info, MAX_NUMBER_OF_SECOND_WORKERS);
-        server->second_workers_arr_size = 0;
-        server_unlock_second_mutex(server);
-    }
-}
-
-void send_shutdown_signal_to_third_workers(Server server) {
-    if (server_lock_third_mutex(server)) {
-        send_shutdown_signal_to_all_in_arr_impl(
-            server->third_workers_fds, server->third_workers_info, MAX_NUMBER_OF_THIRD_WORKERS);
-        server->third_workers_arr_size = 0;
-        server_unlock_third_mutex(server);
-    }
-}
-
-void send_shutdown_signal_to_all_clients_of_type(Server server, ClientType type) {
-    switch (type) {
-        case FIRST_STAGE_WORKER_CLIENT:
-            send_shutdown_signal_to_first_workers(server);
+            server_handle_invalid_message_type(server, &message, &info);
             break;
-        case SECOND_STAGE_WORKER_CLIENT:
-            send_shutdown_signal_to_second_workers(server);
-            break;
-        case THIRD_STAGE_WORKER_CLIENT:
-            send_shutdown_signal_to_third_workers(server);
-            break;
-        default:
-            return;
-    }
-}
-
-void send_shutdown_signal_to_all(Server server) {
-    send_shutdown_signal_to_first_workers(server);
-    send_shutdown_signal_to_second_workers(server);
-    send_shutdown_signal_to_third_workers(server);
-    if (shutdown(server->sock_fd, SHUT_RDWR) == -1) {
-        perror("shutdown[send_shutdown_signal_to_all]");
-    }
-}
-
-static bool is_socket_alive(int sock_fd) {
-    int error     = 0;
-    socklen_t len = sizeof(error);
-    int retval    = getsockopt(sock_fd, SOL_SOCKET, SO_ERROR, &error, &len);
-    if (retval != 0) {
-        fprintf(stderr, "> Error getting socket error code: %s\n", strerror(retval));
-        return false;
-    }
-    if (error != 0) {
-        errno = error;
-        handle_socket_op_error("is_socket_alive");
-        return false;
-    }
-    return true;
-}
-
-static bool poll_workers(Server server, int workers_fds[], const ClientMetaInfo workers_info[],
-                         volatile size_t* current_workers_online, size_t max_number_of_workers,
-                         PinsQueue pins_q) {
-    ServerLog log;
-    for (size_t i = 0;
-         i < max_number_of_workers && *current_workers_online > 0 && !pins_queue_full(pins_q);
-         i++) {
-        int worker_fd = workers_fds[i];
-        if (worker_fd == -1) {
-            continue;
-        }
-        if (!is_socket_alive(worker_fd)) {
-            workers_fds[i] = -1;
-            close(worker_fd);
-            (*current_workers_online)--;
-            continue;
-        }
-
-        union {
-            char bytes[NET_BUFFER_SIZE];
-            Pin pin;
-        } buffer                = {0};
-        const ssize_t read_size = recv(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT);
-        if (read_size != sizeof(Pin)) {
-            switch (handle_socket_op_error("recv")) {
-                case EMPTY_CLIENT_SOCKET:
-                    continue;
-                case DEAD_CLIENT_SOCKET:
-                    workers_fds[i] = -1;
-                    close(worker_fd);
-                    (*current_workers_online)--;
-                    continue;
-                case UNKNOWN_SOCKET_ERROR:
-                default:
-                    return false;
-            }
-        }
-
-        const ClientMetaInfo* info = &workers_info[i];
-        int ret                    = snprintf(log.message, sizeof(log.message),
-                                              "> Received pin[pin_id=%d] from the "
-                                                                 "worker[address=%s:%s | %s:%s]\n",
-                                              buffer.pin.pin_id, info->host, info->port, info->numeric_host,
-                                              info->numeric_port);
-        assert(ret > 0);
-        assert(log.message[0] != '\0');
-        handle_log(server, &log);
-        bool res = pins_queue_try_put(pins_q, buffer.pin);
-        assert(res);
     }
 
     return true;
 }
 
-static bool send_pins_to_workers(Server server, int workers_fds[],
-                                 const ClientMetaInfo workers_info[],
-                                 volatile size_t* current_workers_online,
-                                 size_t max_number_of_workers, PinsQueue pins_q) {
-    ServerLog log;
-    for (size_t i = 0;
-         i < max_number_of_workers && *current_workers_online > 0 && !pins_queue_empty(pins_q);
-         i++) {
-        int worker_fd = workers_fds[i];
-        if (worker_fd == -1) {
-            continue;
-        }
-
-        if (!is_socket_alive(worker_fd)) {
-            workers_fds[i] = -1;
-            close(worker_fd);
-            (*current_workers_online)--;
-            continue;
-        }
-
-        union {
-            char bytes[sizeof(Pin)];
-            Pin pin;
-        } buffer;
-        Pin pin;
-        bool res = pins_queue_try_pop(pins_q, &pin);
-        assert(res);
-        buffer.pin = pin;
-
-        const ssize_t sent_size =
-            send(worker_fd, buffer.bytes, sizeof(Pin), MSG_DONTWAIT | MSG_NOSIGNAL);
-        if (sent_size != sizeof(Pin)) {
-            switch (handle_socket_op_error("send")) {
-                case EMPTY_CLIENT_SOCKET:
-                    continue;
-                case DEAD_CLIENT_SOCKET:
-                    workers_fds[i] = -1;
-                    close(worker_fd);
-                    (*current_workers_online)--;
-                    continue;
-                case UNKNOWN_SOCKET_ERROR:
-                default:
-                    return false;
-            }
-        }
-
-        const ClientMetaInfo* info = &workers_info[i];
-        int ret                    = snprintf(log.message, sizeof(log.message),
-                                              "> Send pin[pid_id=%d] to the "
-                                                                 "worker[address=%s:%s | %s:%s]\n",
-                                              buffer.pin.pin_id, info->host, info->port, info->numeric_host,
-                                              info->numeric_port);
-        assert(ret > 0);
-        assert(log.message[0] != '\0');
-        handle_log(server, &log);
-    }
-
-    return true;
-}
-
-bool nonblocking_poll_workers_on_the_first_stage(Server server, PinsQueue pins_1_to_2) {
-    if (server->first_workers_arr_size == 0 || pins_queue_full(pins_1_to_2)) {
-        return true;
-    }
-
-    if (!server_lock_first_mutex(server)) {
-        return false;
-    }
-    bool res =
-        poll_workers(server, server->first_workers_fds, server->first_workers_info,
-                     &server->first_workers_arr_size, MAX_NUMBER_OF_FIRST_WORKERS, pins_1_to_2);
-    if (!server_unlock_first_mutex(server)) {
-        return false;
-    }
-
-    return res;
-}
-
-bool nonblocking_poll_workers_on_the_second_stage(Server server, PinsQueue pins_1_to_2,
-                                                  PinsQueue pins_2_to_3) {
-    if (server->second_workers_arr_size == 0 ||
-        (pins_queue_full(pins_1_to_2) && pins_queue_empty(pins_2_to_3))) {
-        return true;
-    }
-
-    if (!server_lock_second_mutex(server)) {
-        return false;
-    }
-    bool res = send_pins_to_workers(server, server->second_workers_fds, server->second_workers_info,
-                                    &server->second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS,
-                                    pins_1_to_2);
-    if (res) {
-        poll_workers(server, server->second_workers_fds, server->second_workers_info,
-                     &server->second_workers_arr_size, MAX_NUMBER_OF_SECOND_WORKERS, pins_2_to_3);
-    }
-    if (!server_unlock_second_mutex(server)) {
-        return false;
-    }
-
-    return res;
-}
-
-bool nonblocking_poll_workers_on_the_third_stage(Server server, PinsQueue pins_2_to_3) {
-    if (server->third_workers_arr_size == 0 || pins_queue_empty(pins_2_to_3)) {
-        return true;
-    }
-
-    if (!server_lock_third_mutex(server)) {
-        return false;
-    }
-    bool res = send_pins_to_workers(server, server->third_workers_fds, server->third_workers_info,
-                                    &server->third_workers_arr_size, MAX_NUMBER_OF_THIRD_WORKERS,
-                                    pins_2_to_3);
-    if (!server_unlock_third_mutex(server)) {
-        return false;
-    }
-
-    return res;
+void send_shutdown_signal_to_all(const Server server) {
+    UDPMessage message = {
+        .sender_type   = COMPONENT_TYPE_SERVER,
+        .receiver_type = COMPONENT_TYPE_FIRST_STAGE_WORKER | COMPONENT_TYPE_SECOND_STAGE_WORKER |
+                         COMPONENT_TYPE_THIRD_STAGE_WORKER,
+        .message_type          = MESSAGE_TYPE_SHUTDOWN_MESSAGE,
+        .message_content.bytes = {0},
+    };
+    send_message(server, &message);
 }
