@@ -8,22 +8,24 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <linux/limits.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 enum {
     MIN_SLEEP_TIME = 1,
-    MAX_SLEEP_TIME = 9,
+    MAX_SLEEP_TIME = 1,
 };
 
 __attribute__((__cold__)) static inline void app_perror_impl(const char* cause, const char* file,
                                                              uint32_t line, const char* func_name) {
     int errno_val                = errno;
     static char buffer[PATH_MAX] = {0};
-    ssize_t bytes_written        = readlink("/proc/self/exe", buffer, sizeof(buffer) * 3 / 4);
+    ssize_t bytes_written        = readlink("/proc/self/exe", buffer, sizeof(buffer) / 2);
     if (bytes_written < 0) {
         perror("at app_perror_impl(): readlink()");
         bytes_written = 0;
@@ -34,9 +36,7 @@ __attribute__((__cold__)) static inline void app_perror_impl(const char* cause, 
     if (bytes_written <= 0) {
         perror("at app_perror_impl(): snprintf()");
     }
-    if (fputs(buffer, stderr) == EOF) {
-        perror("at app_perror_impl(): fputs()");
-    }
+    fputs(buffer, stderr);
 }
 
 #if defined __GNUC__ && defined __GNUC_MINOR__ && \

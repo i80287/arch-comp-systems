@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>  // for uint16_t
+#include <stdint.h>
 
 typedef enum ParseStatus {
     PARSE_SUCCESS,
@@ -9,19 +9,11 @@ typedef enum ParseStatus {
     PARSE_INVALID_PORT,
 } ParseStatus;
 
-typedef struct ParseResultClient {
+typedef struct ParseResult {
     const char* ip_address;
     uint16_t port;
     ParseStatus status;
-} ParseResultClient;
+} ParseResult;
 
-typedef struct ParseResultServer {
-    uint16_t port;
-    ParseStatus status;
-} ParseResultServer;
-
-ParseResultClient parse_args_client(int argc, const char* argv[]);
-ParseResultServer parse_args_server(int argc, const char* argv[]);
-
-void print_invalid_args_error_client(ParseStatus status, const char* program_path);
-void print_invalid_args_error_server(ParseStatus status, const char* program_path);
+ParseResult parse_args(int argc, const char* argv[]);
+void print_invalid_args_error(ParseStatus status, const char* program_path);

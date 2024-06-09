@@ -30,36 +30,20 @@ static bool parse_port(const char* port_str, uint16_t* port) {
     return !parse_error && !port_value_overflow;
 }
 
-ParseResultClient parse_args_client(int argc, const char* argv[]) {
-    ParseResultClient res = {
+ParseResult parse_args(int argc, const char* argv[]) {
+    ParseResult res = {
         .ip_address = NULL,
         .port       = 0,
         .status     = PARSE_INVALID_ARGC,
     };
-    if (argc != 3) {
-        return res;
-    }
-    res.ip_address = argv[1];
-    if (!verify_ip(res.ip_address, true)) {
-        res.status = PARSE_INVALID_IP_ADDRESS;
-        return res;
-    }
-    if (!parse_port(argv[2], &res.port)) {
-        res.status = PARSE_INVALID_PORT;
-        return res;
-    }
-    res.status = PARSE_SUCCESS;
-    return res;
-}
-
-ParseResultServer parse_args_server(int argc, const char* argv[]) {
-    ParseResultServer res = {
-        .port   = 0,
-        .status = PARSE_INVALID_ARGC,
-    };
     if (argc != 2) {
         return res;
     }
+    // res.ip_address = argv[1];
+    // if (!verify_ip(res.ip_address, true)) {
+    //     res.status = PARSE_INVALID_IP_ADDRESS;
+    //     return res;
+    // }
     if (!parse_port(argv[1], &res.port)) {
         res.status = PARSE_INVALID_PORT;
         return res;
@@ -68,7 +52,7 @@ ParseResultServer parse_args_server(int argc, const char* argv[]) {
     return res;
 }
 
-void print_invalid_args_error_client(ParseStatus status, const char* program_path) {
+void print_invalid_args_error(ParseStatus status, const char* program_path) {
     const char* error_str;
     switch (status) {
         case PARSE_INVALID_ARGC:
@@ -87,28 +71,9 @@ void print_invalid_args_error_client(ParseStatus status, const char* program_pat
 
     fprintf(stderr,
             "CLI args error: %s\n"
-            "Usage: %s <server ip address> <server port>\n"
-            "Example: %s 127.0.0.1 31457\n",
-            error_str, program_path, program_path);
-}
-
-void print_invalid_args_error_server(ParseStatus status, const char* program_path) {
-    const char* error_str;
-    switch (status) {
-        case PARSE_INVALID_ARGC:
-            error_str = "Invalid number of arguments";
-            break;
-        case PARSE_INVALID_PORT:
-            error_str = "Invalid port";
-            break;
-        default:
-            error_str = "Unknown error";
-            break;
-    }
-
-    fprintf(stderr,
-            "CLI args error: %s\n"
+            // "Usage: %s <server ip address> <server port>\n"
+            // "Example: %s 127.0.0.1 31457\n",
             "Usage: %s <server port>\n"
-            "Example: %s 42592\n",
+            "Example: %s 31457\n",
             error_str, program_path, program_path);
 }

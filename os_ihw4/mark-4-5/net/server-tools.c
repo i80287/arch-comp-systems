@@ -62,7 +62,7 @@ static bool is_socket_alive(int sock_fd) {
     return true;
 }
 
-static bool setup_server(int server_sock_fd, struct sockaddr_in* server_sa, uint16_t server_port) {
+static bool setup_server(int server_sock_fd, struct sockaddr_in* server_address, uint16_t server_port) {
     if (-1 == setsockopt(server_sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){true}, sizeof(int))) {
         app_perror("setsockopt[SOL_SOCKET,SO_REUSEADDR]");
         return false;
@@ -73,12 +73,14 @@ static bool setup_server(int server_sock_fd, struct sockaddr_in* server_sa, uint
         return false;
     }
 
-    *server_sa = (struct sockaddr_in){
+    *server_address = (struct sockaddr_in){
         .sin_family      = AF_INET,
         .sin_port        = htons(server_port),
-        .sin_addr.s_addr = htonl(INADDR_ANY),
+        .sin_addr.s_addr = htonl(INADDR_BROADCAST)
+        // htonl(INADDR_ANY)
+        // inet_addr(server_ip_address)
     };
-    if (-1 == bind(server_sock_fd, (const struct sockaddr*)server_sa, sizeof(*server_sa))) {
+    if (-1 == bind(server_sock_fd, (const struct sockaddr*)server_address, sizeof(*server_address))) {
         app_perror("bind");
         return false;
     }
@@ -320,8 +322,7 @@ bool nonblocking_poll(const Server server) {
 void send_shutdown_signal_to_all(const Server server) {
     UDPMessage message = {
         .sender_type   = COMPONENT_TYPE_SERVER,
-        .receiver_type = COMPONENT_TYPE_FIRST_STAGE_WORKER | COMPONENT_TYPE_SECOND_STAGE_WORKER |
-                         COMPONENT_TYPE_THIRD_STAGE_WORKER,
+        .receiver_type = COMPONENT_TYPE_ANY_WORKER,
         .message_type          = MESSAGE_TYPE_SHUTDOWN_MESSAGE,
         .message_content.bytes = {0},
     };

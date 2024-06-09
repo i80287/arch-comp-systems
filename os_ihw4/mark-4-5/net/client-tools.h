@@ -27,7 +27,7 @@ typedef struct Client {
     struct sockaddr_in server_broadcast_sock_addr;
 } Client[1];
 
-bool init_client(Client client, const char* server_ip, uint16_t server_port, ComponentType type);
+bool init_client(Client client, uint16_t server_port, ComponentType type);
 void deinit_client(Client client);
 
 static inline bool is_worker(const Client client) {
@@ -47,7 +47,7 @@ static inline void print_client_info(const Client client) {
     print_sock_addr_info((const struct sockaddr*)&client->server_broadcast_sock_addr,
                          sizeof(client->server_broadcast_sock_addr));
 }
-Pin receive_new_pin();
+Pin receive_new_pin(void);
 bool check_pin_crookness(Pin pin);
 bool send_not_croocked_pin(const Client worker, Pin pin);
 bool receive_not_crooked_pin(const Client worker, Pin* rec_pin);

@@ -37,7 +37,7 @@ static volatile pthread_t app_threads[4]         = {(pthread_t)-1, (pthread_t)-1
                                                     (pthread_t)-1};
 static volatile atomic_size_t app_threads_size   = 0;
 
-static void stop_all_threads() {
+static void stop_all_threads(void) {
     static volatile atomic_bool disposed = false;
 
     bool value_if_first_call = false;
@@ -65,7 +65,7 @@ static void signal_handler(int sig) {
     fprintf(stderr, "> Received signal %d\n", sig);
     stop_all_threads();
 }
-static void setup_signal_handler() {
+static void setup_signal_handler(void) {
     const int handled_signals[] = {
         SIGABRT, SIGINT, SIGTERM, SIGSEGV, SIGQUIT, SIGKILL,
     };
@@ -123,7 +123,7 @@ static int join_thread(pthread_t pthread_id) {
     return (int)(uintptr_t)poll_ret;
 }
 
-static int start_runtime_loop() {
+static int start_runtime_loop(void) {
     pthread_t poll_thread;
     if (!create_thread(&poll_thread, &workers_poller)) {
         return EXIT_FAILURE;
@@ -144,7 +144,7 @@ static int run_server(uint16_t server_port) {
         return EXIT_FAILURE;
     }
 
-    int ret = start_runtime_loop(&server);
+    int ret = start_runtime_loop();
     deinit_server(&server);
     printf("> Deinitialized server resources\n");
     return ret;
@@ -153,9 +153,9 @@ static int run_server(uint16_t server_port) {
 int main(int argc, const char* argv[]) {
     setup_signal_handler();
 
-    ParseResultServer res = parse_args_server(argc, argv);
+    ParseResult res = parse_args(argc, argv);
     if (res.status != PARSE_SUCCESS) {
-        print_invalid_args_error_server(res.status, argv[0]);
+        print_invalid_args_error(res.status, argv[0]);
         return EXIT_FAILURE;
     }
 

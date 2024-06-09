@@ -1,4 +1,4 @@
-#include <stdbool.h> 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,9 +43,9 @@ static void start_runtime_loop(Client worker) {
         "+------------------------------------------+\n");
 }
 
-static int run_worker(const char* server_ip_address, uint16_t server_port) {
+static int run_worker(uint16_t server_port) {
     Client worker;
-    if (!init_client(worker, server_ip_address, server_port, COMPONENT_TYPE_THIRD_STAGE_WORKER)) {
+    if (!init_client(worker, server_port, COMPONENT_TYPE_THIRD_STAGE_WORKER)) {
         return EXIT_FAILURE;
     }
 
@@ -56,11 +56,11 @@ static int run_worker(const char* server_ip_address, uint16_t server_port) {
 }
 
 int main(int argc, const char* argv[]) {
-    ParseResultClient res = parse_args_client(argc, argv);
+    ParseResult res = parse_args(argc, argv);
     if (res.status != PARSE_SUCCESS) {
-        print_invalid_args_error_client(res.status, argv[0]);
+        print_invalid_args_error(res.status, argv[0]);
         return EXIT_FAILURE;
     }
 
-    return run_worker(res.ip_address, res.port);
+    return run_worker(res.port);
 }
