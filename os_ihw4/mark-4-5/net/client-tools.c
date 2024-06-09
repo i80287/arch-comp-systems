@@ -59,7 +59,8 @@ static bool setup_client(int client_sock_fd, struct sockaddr_in* client_send_add
     //     .sin_port = htons(client_port),
     //     .sin_addr.s_addr = htonl(INADDR_ANY),
     // };
-    if (-1 == bind(client_sock_fd, (const struct sockaddr*)client_send_address, sizeof(*client_send_address))) {
+    if (-1 == bind(client_sock_fd, (const struct sockaddr*)client_send_address,
+                   sizeof(*client_send_address))) {
         app_perror("bind");
         return false;
     }

@@ -18,7 +18,7 @@
 
 enum {
     MIN_SLEEP_TIME = 1,
-    MAX_SLEEP_TIME = 1,
+    MAX_SLEEP_TIME = 9,
 };
 
 __attribute__((__cold__)) static inline void app_perror_impl(const char* cause, const char* file,

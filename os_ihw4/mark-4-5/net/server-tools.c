@@ -62,7 +62,8 @@ static bool is_socket_alive(int sock_fd) {
     return true;
 }
 
-static bool setup_server(int server_sock_fd, struct sockaddr_in* server_address, uint16_t server_port) {
+static bool setup_server(int server_sock_fd, struct sockaddr_in* server_address,
+                         uint16_t server_port) {
     if (-1 == setsockopt(server_sock_fd, SOL_SOCKET, SO_REUSEADDR, &(int){true}, sizeof(int))) {
         app_perror("setsockopt[SOL_SOCKET,SO_REUSEADDR]");
         return false;
@@ -80,7 +81,8 @@ static bool setup_server(int server_sock_fd, struct sockaddr_in* server_address,
         // htonl(INADDR_ANY)
         // inet_addr(server_ip_address)
     };
-    if (-1 == bind(server_sock_fd, (const struct sockaddr*)server_address, sizeof(*server_address))) {
+    if (-1 ==
+        bind(server_sock_fd, (const struct sockaddr*)server_address, sizeof(*server_address))) {
         app_perror("bind");
         return false;
     }
@@ -321,8 +323,8 @@ bool nonblocking_poll(const Server server) {
 
 void send_shutdown_signal_to_all(const Server server) {
     UDPMessage message = {
-        .sender_type   = COMPONENT_TYPE_SERVER,
-        .receiver_type = COMPONENT_TYPE_ANY_WORKER,
+        .sender_type           = COMPONENT_TYPE_SERVER,
+        .receiver_type         = COMPONENT_TYPE_ANY_WORKER,
         .message_type          = MESSAGE_TYPE_SHUTDOWN_MESSAGE,
         .message_content.bytes = {0},
     };

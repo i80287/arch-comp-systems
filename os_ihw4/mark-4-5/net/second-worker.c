@@ -56,10 +56,16 @@ static int start_runtime_loop(Client worker) {
     }
 
     if (ret == EXIT_SUCCESS) {
-        printf("Received shutdown signal from the server\n");
+        printf(
+            "+------------------------------------------+\n"
+            "| Received shutdown signal from the server |\n"
+            "+------------------------------------------+\n");
     }
 
-    printf("Second worker is stopping...\n");
+    printf(
+        "+------------------------------+\n"
+        "| Second worker is stopping... |\n"
+        "+------------------------------+\n");
     return ret;
 }
 
