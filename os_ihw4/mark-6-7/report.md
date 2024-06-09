@@ -4,11 +4,12 @@
 
 ## Описание программ
 
-**Для выполнения задачи были написаны 4 программы:**
+**Для выполнения задачи были написаны 5 программ:**
 * #### server.c - сервер, к которому подключаются клиенты (рабочие на участках) и который перенаправляет сообщения между ними, выводя информацию в консоль. Функции для инициализации стркутуры Server и работы с сетью вынесены в модуль server-tools.c.
 * #### first-worker.c - клиент, эмулирующий работу работника на 1 участке.
 * #### second-worker.c - клиент, эмулирующий работу работника на 2 участке.
 * #### third-worker.c - клиент, эмулирующий работу работника на 3 участке.
+* #### logs-collector.c - клиент, эмулирующий работу работника на 3 участке.
 #### Для работы с сетью все клиенты используют функции из модуля client-tools.c, сервер - из модуля server-tools.c.
 
 Корретное завершение работы приложения возможно при нажатии сочетания клавиш Ctrl-C, в таком случае сервер пошлёт всем клиентам специальный сигнал о завершении работы и корректно деинициализирует все выделенные ресурсы. Если клиент разрывает соединение, сервер корректно обрабатывает это и удаляет клиента из внуреннего массива клиентов.
@@ -49,14 +50,24 @@ static int start_runtime_loop(void) {
         return EXIT_FAILURE;
     }
     printf("> Started polling thread\n");
+
+    pthread_t logs_thread;
+    if (!create_thread(&logs_thread, &logs_sender)) {
+        pthread_cancel(poll_thread);
+        return EXIT_FAILURE;
+    }
+    printf("> Started logging thread\n");
+
     const int ret = join_thread(poll_thread);
     printf("> Joined polling thread\n");
+    const int ret_1 = join_thread(logs_thread);
+    printf("> Joined logging thread\n");
 
     printf("> Started sending shutdown signals to all clients\n");
     send_shutdown_signal_to_all(&server);
     printf("> Sent shutdown signals to all clients\n");
 
-    return ret;
+    return ret | ret_1;
 }
 ```
 
@@ -66,7 +77,7 @@ static void* workers_poller(void* unused) {
     (void)unused;
     const struct timespec sleep_time = {
         .tv_sec  = 1,
-        .tv_nsec = 500000000,
+        .tv_nsec = 0,
     };
 
     while (is_poller_running) {
@@ -77,7 +88,7 @@ static void* workers_poller(void* unused) {
         if (nanosleep(&sleep_time, NULL) == -1) {
             if (errno != EINTR) {
                 // if not interrupted by the signal
-                perror("nanosleep");
+                app_perror("nanosleep");
             }
             break;
         }
@@ -95,17 +106,21 @@ static void* logs_sender(void* unused) {
     (void)unused;
     const struct timespec sleep_time = {
         .tv_sec  = 1,
-        .tv_nsec = 500000000,
+        .tv_nsec = 0,
     };
 
     ServerLog log = {0};
     while (is_logger_running) {
         if (!dequeue_log(&server, &log)) {
-            fprintf(stderr, "> Could not get next log\n");
+            fputs("> Could not get next log\n", stderr);
             break;
         }
 
-        send_server_log(&server, &log);
+        if (!send_server_log(&server, &log)) {
+            fputs("> Could not send log\n", stderr);
+            break;
+        }
+
         if (nanosleep(&sleep_time, NULL) == -1) {
             if (errno != EINTR) {  // if not interrupted by the signal
                 perror("nanosleep");
@@ -114,8 +129,10 @@ static void* logs_sender(void* unused) {
         }
     }
 
-    int32_t ret       = is_logger_running ? EXIT_FAILURE : EXIT_SUCCESS;
-    is_poller_running = false;
+    int32_t ret = is_logger_running ? EXIT_FAILURE : EXIT_SUCCESS;
+    if (is_logger_running) {
+        stop_all_threads();
+    }
     return (void*)(uintptr_t)(uint32_t)ret;
 }
 ```
@@ -135,12 +152,17 @@ enum {
 typedef struct Server {
     int sock_fd;
     struct sockaddr_in sock_addr;
+    struct ServerLogsQueue logs_queue;
 } Server[1];
 
 bool init_server(Server server, uint16_t server_port);
 void deinit_server(Server server);
-bool nonblocking_poll(const Server server);
+bool nonblocking_poll(Server server);
 void send_shutdown_signal_to_all(const Server server);
+
+bool nonblocking_enqueue_log(Server server, const ServerLog* log);
+bool dequeue_log(Server server, ServerLog* log);
+bool send_server_log(const Server server, const ServerLog* log);
 ```
 
 ### Структура булавки описана в файле "pin.h":
@@ -214,6 +236,62 @@ static int start_runtime_loop(Client worker) {
 }
 ```
 
+### Программы second-worker.c и third-worker.c устроены аналогично программе first-worker.c, но эмулируют работу рабочих на 2 и 3 участках соответственно.
+
+### Клиент для отображения информации о работе системы (клиент, получающий логи от сервера) парсит входные аргументы, и, если порт указан корректно, инициализирует ресурсы структуру Client и запускает основной цикл:
+
+```c
+static int run_logs_collector(uint16_t server_port) {
+    Client logs_col;
+    if (!init_client(logs_col, server_port, COMPONENT_TYPE_LOGS_COLLECTOR)) {
+        return EXIT_FAILURE;
+    }
+
+    print_client_info(logs_col);
+    int ret = start_runtime_loop(logs_col);
+    deinit_client(logs_col);
+    return ret;
+}
+
+int main(int argc, char const* argv[]) {
+    ParseResult res = parse_args(argc, argv);
+    if (res.status != PARSE_SUCCESS) {
+        print_invalid_args_error(res.status, argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    return run_logs_collector(res.port);
+}
+```
+
+```c
+static int start_runtime_loop(Client logs_col) {
+    int ret = EXIT_SUCCESS;
+    ServerLog log;
+    while (!client_should_stop(logs_col)) {
+        if (!receive_server_log(logs_col, &log)) {
+            ret = EXIT_FAILURE;
+            break;
+        }
+
+        print_server_log(&log);
+    }
+
+    if (ret == EXIT_SUCCESS) {
+        printf(
+            "+------------------------------------------+\n"
+            "| Received shutdown signal from the server |\n"
+            "+------------------------------------------+\n");
+    }
+
+    printf(
+        "+-------------------------------+\n"
+        "| Logs collector is stopping... |\n"
+        "+-------------------------------+\n");
+    return ret;
+}
+```
+
 ### Интерфейс модуля client-tools.h для работы с сетью (в отчёте без include'ов и у функций только сигнатуры):
 ```c
 typedef struct Client {
@@ -250,30 +328,32 @@ void sharpen_pin(Pin pin);
 bool send_sharpened_pin(const Client worker, Pin pin);
 bool receive_sharpened_pin(const Client worker, Pin* rec_pin);
 bool check_sharpened_pin_quality(Pin sharpened_pin);
+bool receive_server_log(Client logs_collector, ServerLog* log);
 ```
-
-### Программы second-worker.c и third-worker.c устроены аналогично программе first-worker.c, но эмулируют работу рабочих на 2 и 3 участках соответственно.
 
 ---
 ## Пример работы приложений
 
 #### Запуск сервера без аргументов. Сервер сообщает о неверно введённых входных данных и выводит формат и пример использования.
-![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img1.png?raw=true)
+![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img1.png?raw=true)
 
 #### Запуск клиента без аргументов. Клиент сообщает о неверно введённых входных данных и выводит формат и пример использования.
-![clnt_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img2.png?raw=true)
+![clnt_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img2.png?raw=true)
 
 #### Запуск сервера. Сервер запускается на локальном адресе на порте 45592.
-![img3](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img3.png?raw=true)
+![img3](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img3.png?raw=true)
 
 #### Запуск клиента first-worker (рабочего на 1 площадке). Клиент подключается к серверу и выводит информацию о сервере (правая консоль). Сервер принимает клиента и выводит информацию о нём (левая консоль) (информация: "first stage worker").
-![img4](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img4.png?raw=true)
+![img4](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img4.png?raw=true)
 
 #### Запуск клиента second-worker (рабочего на 2 площадке). Клиент подключается к серверу и выводит информацию о сервере (3-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "second stage worker").
-![img5](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img5.png?raw=true)
+![img5](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img5.png?raw=true)
 
-#### Запуск клиента third-worker (рабочего на 3 площадке). Клиент подключается к серверу по адресу 127.0.0.1:45235 и выводит информацию о сервере (4-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "third stage worker").
-![img6](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img6.png?raw=true)
+#### Запуск клиента third-worker (рабочего на 3 площадке). Клиент подключается к серверу и выводит информацию о сервере (4-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "third stage worker").
+![img6](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img6.png?raw=true)
+
+#### Запуск клиента logs-collector (клиент, получающий логи от сервера). Клиент подключается к серверу и выводит информацию о сервере (5-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "logs collector").
+![img7](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img7.png?raw=true)
 
 #### Завершение работы системы при нажатии сочетания клавиш Ctrl-C в консоли сервера. Сервер посылает сигнал о завершении клиентам и закрывает все сокеты и деинициализирует ресурсы. Все клиенты и сервер завершили работу.
-![img7](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-4-5/images/img7.png?raw=true)
+![img8](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img8.png?raw=true)
