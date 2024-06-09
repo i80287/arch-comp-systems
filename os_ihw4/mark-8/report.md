@@ -58,16 +58,16 @@ static int start_runtime_loop(void) {
     }
     printf("> Started logging thread\n");
 
-    const int ret = join_thread(poll_thread);
+    const int ret_poller = join_thread(poll_thread);
     printf("> Joined polling thread\n");
-    const int ret_1 = join_thread(logs_thread);
+    const int ret_logger = join_thread(logs_thread);
     printf("> Joined logging thread\n");
 
     printf("> Started sending shutdown signals to all clients\n");
     send_shutdown_signal_to_all(&server);
     printf("> Sent shutdown signals to all clients\n");
 
-    return ret | ret_1;
+    return ret_poller | ret_logger;
 }
 ```
 
@@ -75,21 +75,13 @@ static int start_runtime_loop(void) {
 ```c
 static void* workers_poller(void* unused) {
     (void)unused;
-    const struct timespec sleep_time = {
-        .tv_sec  = 1,
-        .tv_nsec = 0,
-    };
 
     while (is_poller_running) {
         if (!nonblocking_poll(&server)) {
             fprintf(stderr, "> Could not poll clients\n");
             break;
         }
-        if (nanosleep(&sleep_time, NULL) == -1) {
-            if (errno != EINTR) {
-                // if not interrupted by the signal
-                app_perror("nanosleep");
-            }
+        if (!app_thread_sleep()) {
             break;
         }
     }
@@ -104,10 +96,6 @@ static void* workers_poller(void* unused) {
 ```c
 static void* logs_sender(void* unused) {
     (void)unused;
-    const struct timespec sleep_time = {
-        .tv_sec  = 1,
-        .tv_nsec = 0,
-    };
 
     ServerLog log = {0};
     while (is_logger_running) {
@@ -115,24 +103,17 @@ static void* logs_sender(void* unused) {
             fputs("> Could not get next log\n", stderr);
             break;
         }
-
         if (!send_server_log(&server, &log)) {
             fputs("> Could not send log\n", stderr);
             break;
         }
-
-        if (nanosleep(&sleep_time, NULL) == -1) {
-            if (errno != EINTR) {  // if not interrupted by the signal
-                perror("nanosleep");
-            }
+        if (!app_thread_sleep()) {
             break;
         }
     }
 
     int32_t ret = is_logger_running ? EXIT_FAILURE : EXIT_SUCCESS;
-    if (is_logger_running) {
-        stop_all_threads();
-    }
+    stop_all_threads();
     return (void*)(uintptr_t)(uint32_t)ret;
 }
 ```
@@ -355,25 +336,28 @@ bool receive_server_log(Client logs_collector, ServerLog* log);
 ## Пример работы приложений
 
 #### Запуск сервера без аргументов. Сервер сообщает о неверно введённых входных данных и выводит формат и пример использования.
-![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img1.png?raw=true)
+![serv_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img1.png?raw=true)
 
 #### Запуск клиента без аргументов. Клиент сообщает о неверно введённых входных данных и выводит формат и пример использования.
-![clnt_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img2.png?raw=true)
+![clnt_invalid_args_hint](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img2.png?raw=true)
 
 #### Запуск сервера. Сервер запускается на локальном адресе на порте 45592.
-![img3](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img3.png?raw=true)
+![img3](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img3.png?raw=true)
 
 #### Запуск клиента first-worker (рабочего на 1 площадке). Клиент подключается к серверу и выводит информацию о сервере (правая консоль). Сервер принимает клиента и выводит информацию о нём (левая консоль) (информация: "first stage worker").
-![img4](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img4.png?raw=true)
+![img4](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img4.png?raw=true)
 
 #### Запуск клиента second-worker (рабочего на 2 площадке). Клиент подключается к серверу и выводит информацию о сервере (3-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "second stage worker").
-![img5](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img5.png?raw=true)
+![img5](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img5.png?raw=true)
 
 #### Запуск клиента third-worker (рабочего на 3 площадке). Клиент подключается к серверу и выводит информацию о сервере (4-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "third stage worker").
-![img6](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img6.png?raw=true)
+![img6](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img6.png?raw=true)
 
-#### Запуск клиента logs-collector (клиент, получающий логи от сервера). Клиент подключается к серверу и выводит информацию о сервере (5-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "logs collector").
-![img7](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img7.png?raw=true)
+#### Запуск первого клиента logs-collector (клиент, получающий логи от сервера). Клиент подключается к серверу и выводит информацию о сервере (5-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "logs collector").
+![img7](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img7.png?raw=true)
+
+#### Запуск второго клиента logs-collector (клиент, получающий логи от сервера). Клиент подключается к серверу и выводит информацию о сервере (6-я консоль слева на право). Сервер принимает клиента и выводит информацию о нём (1-я консоль слева на право) (информация: "logs collector").
+![img8](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img8.png?raw=true)
 
 #### Завершение работы системы при нажатии сочетания клавиш Ctrl-C в консоли сервера. Сервер посылает сигнал о завершении клиентам и закрывает все сокеты и деинициализирует ресурсы. Все клиенты и сервер завершили работу.
-![img8](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-6-7/images/img8.png?raw=true)
+![img9](https://github.com/i80287/arch-comp-systems/blob/main/os_ihw4/mark-8/images/img9.png?raw=true)
