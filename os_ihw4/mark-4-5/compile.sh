@@ -1,6 +1,6 @@
 #! /bin/sh
 
-clang ./net/first-worker.c ./net/client-tools.c ./util/parser.c -g3 -O2 -fsanitize=address,undefined -fno-omit-frame-pointer -fstack-protector-all -mshstk -Wall -Wextra -Wpedantic -Wcast-qual -Wshift-overflow -Wunused -Wconversion -Wsign-conversion -Warray-bounds -Wshadow -Wnull-dereference -Wundef -Wwrite-strings -Wsign-conversion -Wmissing-noreturn -Wunreachable-code -Wcast-align -lrt -lm -o first-worker
-clang ./net/second-worker.c ./net/client-tools.c ./util/parser.c -g3 -O2 -fsanitize=address,undefined -fno-omit-frame-pointer -fstack-protector-all -mshstk -Wall -Wextra -Wpedantic -Wcast-qual -Wshift-overflow -Wunused -Wconversion -Wsign-conversion -Warray-bounds -Wshadow -Wnull-dereference -Wundef -Wwrite-strings -Wsign-conversion -Wmissing-noreturn -Wunreachable-code -Wcast-align -lrt -lm -o second-worker
-clang ./net/third-worker.c ./net/client-tools.c ./util/parser.c -g3 -O2 -fsanitize=address,undefined -fno-omit-frame-pointer -fstack-protector-all -mshstk -Wall -Wextra -Wpedantic -Wcast-qual -Wshift-overflow -Wunused -Wconversion -Wsign-conversion -Warray-bounds -Wshadow -Wnull-dereference -Wundef -Wwrite-strings -Wsign-conversion -Wmissing-noreturn -Wunreachable-code -Wcast-align -lrt -lm -o third-worker
-clang ./net/server.c ./net/server-tools.c ./util/parser.c -g3 -O2 -fsanitize=address,undefined -fno-omit-frame-pointer -fstack-protector-all -mshstk -Wall -Wextra -Wpedantic -Wcast-qual -Wshift-overflow -Wunused -Wconversion -Wsign-conversion -Warray-bounds -Wshadow -Wnull-dereference -Wundef -Wwrite-strings -Wsign-conversion -Wmissing-noreturn -Wunreachable-code -Wcast-align -lrt -lpthread -o server
+gcc ./net/server.c ./net/server-tools.c ./util/parser.c -O2 -lrt -lpthread -o server
+gcc ./net/first-worker.c ./net/client-tools.c ./util/parser.c -O2 -lrt -lm -o first-worker
+gcc ./net/second-worker.c ./net/client-tools.c ./util/parser.c -O2 -lrt -lm -o second-worker
+gcc ./net/third-worker.c ./net/client-tools.c ./util/parser.c -O2 -lrt -lm -o third-worker
