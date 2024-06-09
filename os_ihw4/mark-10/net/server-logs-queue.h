@@ -1,5 +1,6 @@
 #pragma once
 
+#include <assert.h>
 #include <errno.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -7,10 +8,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
+#include "../util/config.h"
 #include "server-log.h"
 
-enum { SERVER_LOGS_QUEUE_MAX_SIZE = 8 };
+enum { SERVER_LOGS_QUEUE_MAX_SIZE = 16 };
 
 struct ServerLogsQueue {
     ServerLog array[SERVER_LOGS_QUEUE_MAX_SIZE];
@@ -29,14 +32,15 @@ static inline bool init_server_logs_queue(struct ServerLogsQueue* queue) {
     err_code                = pthread_mutex_init(&queue->queue_access_mutex, NULL);
     if (err_code != 0) {
         error_cause = "pthread_mutex_init";
-        errno       = err_code;
         goto init_server_logs_queue_empty_cleanup;
     }
     if (sem_init(&queue->added_elems_sem, true, 0) == -1) {
+        err_code    = errno;
         error_cause = "sem_init";
         goto init_server_logs_queue_mutex_cleanup;
     }
     if (sem_init(&queue->free_elems_sem, true, SERVER_LOGS_QUEUE_MAX_SIZE) == -1) {
+        err_code    = errno;
         error_cause = "sem_init";
         goto init_server_logs_queue_mutex_sem_1_cleanup;
     }
@@ -48,7 +52,8 @@ init_server_logs_queue_mutex_sem_1_cleanup:
 init_server_logs_queue_mutex_cleanup:
     pthread_mutex_destroy(&queue->queue_access_mutex);
 init_server_logs_queue_empty_cleanup:
-    perror(error_cause);
+    errno = err_code;
+    app_perror(error_cause);
     return false;
 }
 
@@ -62,13 +67,15 @@ static inline bool server_logs_queue_nonblocking_enqueue(struct ServerLogsQueue*
                                                          const ServerLog* log) {
     if (sem_trywait(&queue->free_elems_sem) == -1) {
         if (errno != EAGAIN) {
-            perror("sem_trywait[server_logs_queue_nonblocking_enqueue]");
+            app_perror("sem_trywait[server_logs_queue_nonblocking_enqueue]");
         }
         return false;
     }
-    if (pthread_mutex_trylock(&queue->queue_access_mutex) != 0) {
-        if (errno != EBUSY) {
-            perror("pthread_mutex_trylock[server_logs_queue_nonblocking_enqueue]");
+    int ret = pthread_mutex_trylock(&queue->queue_access_mutex);
+    if (ret != 0) {
+        if (ret != EBUSY) {
+            errno = ret;
+            app_perror("pthread_mutex_trylock[server_logs_queue_nonblocking_enqueue]");
         }
         sem_post(&queue->free_elems_sem);
         return false;
@@ -81,21 +88,25 @@ static inline bool server_logs_queue_nonblocking_enqueue(struct ServerLogsQueue*
     queue->size++;
 
     if (sem_post(&queue->added_elems_sem) == -1) {
-        perror("sem_post[server_logs_queue_nonblocking_enqueue]");
+        app_perror("sem_post[server_logs_queue_nonblocking_enqueue]");
     }
-    if (pthread_mutex_unlock(&queue->queue_access_mutex)) {
-        perror("pthread_mutex_unlock[server_logs_queue_nonblocking_enqueue]");
+    ret = pthread_mutex_unlock(&queue->queue_access_mutex);
+    if (ret != 0) {
+        errno = ret;
+        app_perror("pthread_mutex_unlock[server_logs_queue_nonblocking_enqueue]");
     }
     return true;
 }
 
 static inline bool server_logs_queue_dequeue(struct ServerLogsQueue* queue, ServerLog* log) {
     if (sem_wait(&queue->added_elems_sem) == -1) {
-        perror("sem_wait[server_logs_queue_dequeue]");
+        app_perror("sem_wait[server_logs_queue_dequeue]");
         return false;
     }
-    if (pthread_mutex_lock(&queue->queue_access_mutex) != 0) {
-        perror("pthread_mutex_trylock[server_logs_queue_dequeue]");
+    int ret = pthread_mutex_lock(&queue->queue_access_mutex);
+    if (ret != 0) {
+        errno = ret;
+        app_perror("pthread_mutex_trylock[server_logs_queue_dequeue]");
         sem_post(&queue->added_elems_sem);
         return false;
     }
@@ -107,10 +118,12 @@ static inline bool server_logs_queue_dequeue(struct ServerLogsQueue* queue, Serv
     queue->size--;
 
     if (sem_post(&queue->free_elems_sem) == -1) {
-        perror("sem_post[server_logs_queue_dequeue]");
+        app_perror("sem_post[server_logs_queue_dequeue]");
     }
-    if (pthread_mutex_unlock(&queue->queue_access_mutex)) {
-        perror("pthread_mutex_unlock[server_logs_queue_dequeue]");
+    ret = pthread_mutex_unlock(&queue->queue_access_mutex);
+    if (ret != 0) {
+        errno = ret;
+        app_perror("pthread_mutex_unlock[server_logs_queue_dequeue]");
     }
 
     return true;

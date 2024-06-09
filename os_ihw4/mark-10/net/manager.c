@@ -7,111 +7,86 @@
 #include "client-tools.h"
 #include "net-config.h"
 
-static size_t strip_string(char* str) {
-    size_t len = strlen(str);
-    while (len > 0 && isspace((uint8_t)str[len - 1])) {
-        len--;
-    }
-    str[len] = '\0';
-    return len;
-}
-
-static bool next_user_command() {
-    printf(
-        "Enter command:\n"
-        "> 1. Disable client\n"
-        "> 2. Exit\n"
-        "\n"
-        "> ");
-
-    uint32_t cmd = 0;
-    while (scanf("%u", &cmd) != 1 || !(cmd - 1 <= 1)) {
-        printf("Unknown command, please, try again\n> ");
-    }
-
-    return cmd == 1;
-}
-
-static void get_command_args(ServerCommand* cmd) {
-    char ip_address[64] = {0};
-    char port[64]       = {0};
+static uint32_t next_uint(const char* prompt, uint32_t min_value, uint32_t max_value) {
     while (true) {
-        printf("Enter ip address:\n> ");
-        int c;
-        while ((c = getchar()) == '\n') {
-        }
-        ungetc(c, stdin);
-        if (fgets(ip_address, sizeof(ip_address), stdin) == NULL) {
-            continue;
+        fputs(prompt, stdout);
+        uint32_t val = 0;
+        if (scanf("%u", &val) == 1 && val - min_value <= max_value - min_value) {
+            return val;
         }
 
-        printf("Enter port:\n> ");
-        while ((c = getchar()) == '\n') {
-        }
-        ungetc(c, stdin);
-        if (fgets(port, sizeof(port), stdin) == NULL) {
-            continue;
-        }
-
-        strip_string(ip_address);
-        strip_string(port);
-        ParseResultClient res = parse_args_client(3, (const char* [3]){"", ip_address, port});
-        if (res.status == PARSE_SUCCESS) {
-            strcpy(cmd->ip_address, res.ip_address);
-            cmd->port = res.port;
-            break;
-        }
+        fputs("Invalid input, please, try again\n> ", stdout);
     }
 }
 
-static void handle_server_response(ServerCommandResult res, int* ret) {
+static bool handle_server_response(ServerCommandResult res) {
     switch (res) {
         case SERVER_COMMAND_SUCCESS:
             printf("Server response: success\n");
-            break;
+            return true;
         case INVALID_SERVER_COMMAND_ARGS:
             printf("Server response: invalid command arguments\n");
-            break;
+            return true;
         case SERVER_INTERNAL_ERROR:
             printf("Server response: internal error\n");
-            break;
+            return true;
         case NO_CONNECTION:
             printf("No connection to the server\n");
-            *ret = EXIT_FAILURE;
-            break;
+            return false;
         default:
             printf("Unknown server response: %d\n", res);
-            *ret = EXIT_FAILURE;
-            break;
+            return false;
     }
+}
+
+static bool next_user_command(void) {
+    return next_uint("Enter command:\n> 1. Disable client\n> 2. Exit\n\n> ", 1, 2) == 1;
 }
 
 static int start_runtime_loop(Client manager) {
     int ret                     = EXIT_SUCCESS;
     bool exit_requested_by_user = false;
-    while (ret == EXIT_SUCCESS && !client_should_stop(manager)) {
+    const char* const prompt =
+        "Enter client type:\n"
+        "> 1. First stage workers\n"
+        "> 2. Second stage workers\n"
+        "> 3. Third stage workers\n"
+        "> 4. Logs collectors\n"
+        "> 5. Managers\n"
+        "\n"
+        "> ";
+
+    while (!client_should_stop(manager)) {
         if (!next_user_command()) {
             exit_requested_by_user = true;
             break;
         }
 
-        ServerCommand cmd = {0};
-        get_command_args(&cmd);
-        ServerCommandResult resp = send_command_to_server(manager, &cmd);
-        handle_server_response(resp, &ret);
+        const ServerCommand cmd = {.client_type = (ComponentType){1u << next_uint(prompt, 1, 5)}};
+        const ServerCommandResult resp = send_manager_command_to_server(manager, cmd);
+        if (!handle_server_response(resp)) {
+            ret = EXIT_FAILURE;
+            break;
+        }
     }
 
     if (ret == EXIT_SUCCESS && !exit_requested_by_user) {
-        printf("Received shutdown signal from the server\n");
+        printf(
+            "+------------------------------------------+\n"
+            "| Received shutdown signal from the server |\n"
+            "+------------------------------------------+\n");
     }
 
-    printf("Manager is stopping...\n");
+    printf(
+        "+------------------------+\n"
+        "| Manager is stopping... |\n"
+        "+------------------------+\n");
     return ret;
 }
 
-static int run_manager(const char* server_ip_address, uint16_t server_port) {
+static int run_manager(uint16_t server_port) {
     Client manager;
-    if (!init_client(manager, server_ip_address, server_port, MANAGER_CLIENT)) {
+    if (!init_client(manager, server_port, COMPONENT_TYPE_MANAGER)) {
         return EXIT_FAILURE;
     }
 
@@ -122,11 +97,11 @@ static int run_manager(const char* server_ip_address, uint16_t server_port) {
 }
 
 int main(int argc, char const* argv[]) {
-    ParseResultClient res = parse_args_client(argc, argv);
+    ParseResult res = parse_args(argc, argv);
     if (res.status != PARSE_SUCCESS) {
-        print_invalid_args_error_client(res.status, argv[0]);
+        print_invalid_args_error(res.status, argv[0]);
         return EXIT_FAILURE;
     }
 
-    return run_manager(res.ip_address, res.port);
+    return run_manager(res.port);
 }

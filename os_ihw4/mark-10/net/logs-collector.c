@@ -2,7 +2,6 @@
 
 #include "../util/parser.h"
 #include "client-tools.h"
-#include "net-config.h"
 #include "server-log.h"
 
 static void print_server_log(const ServerLog* log) {
@@ -22,16 +21,22 @@ static int start_runtime_loop(Client logs_col) {
     }
 
     if (ret == EXIT_SUCCESS) {
-        printf("Received shutdown signal from the server\n");
+        printf(
+            "+------------------------------------------+\n"
+            "| Received shutdown signal from the server |\n"
+            "+------------------------------------------+\n");
     }
 
-    printf("Logs collector is stopping...\n");
+    printf(
+        "+-------------------------------+\n"
+        "| Logs collector is stopping... |\n"
+        "+-------------------------------+\n");
     return ret;
 }
 
-static int run_logs_collector(const char* server_ip_address, uint16_t server_port) {
+static int run_logs_collector(uint16_t server_port) {
     Client logs_col;
-    if (!init_client(logs_col, server_ip_address, server_port, LOGS_COLLECTOR_CLIENT)) {
+    if (!init_client(logs_col, server_port, COMPONENT_TYPE_LOGS_COLLECTOR)) {
         return EXIT_FAILURE;
     }
 
@@ -42,11 +47,11 @@ static int run_logs_collector(const char* server_ip_address, uint16_t server_por
 }
 
 int main(int argc, char const* argv[]) {
-    ParseResultClient res = parse_args_client(argc, argv);
+    ParseResult res = parse_args(argc, argv);
     if (res.status != PARSE_SUCCESS) {
-        print_invalid_args_error_client(res.status, argv[0]);
+        print_invalid_args_error(res.status, argv[0]);
         return EXIT_FAILURE;
     }
 
-    return run_logs_collector(res.ip_address, res.port);
+    return run_logs_collector(res.port);
 }
