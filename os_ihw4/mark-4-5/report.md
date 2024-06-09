@@ -15,6 +15,42 @@
 
 ---
 
+### Типы компонентов программы описываются перечислением ComponentType, сообщение, пересылаемое между ними, - структурой UDPMessage, тип сообщения - перечислением MessageType:
+
+```c
+typedef enum ComponentType {
+    COMPONENT_TYPE_SERVER              = 1u << 0,
+    COMPONENT_TYPE_FIRST_STAGE_WORKER  = 1u << 1,
+    COMPONENT_TYPE_SECOND_STAGE_WORKER = 1u << 2,
+    COMPONENT_TYPE_THIRD_STAGE_WORKER  = 1u << 3,
+    COMPONENT_TYPE_ANY_WORKER          = COMPONENT_TYPE_FIRST_STAGE_WORKER |
+                                COMPONENT_TYPE_SECOND_STAGE_WORKER |
+                                COMPONENT_TYPE_THIRD_STAGE_WORKER
+} ComponentType;
+
+typedef enum MessageType {
+    MESSAGE_TYPE_PIN_TRANSFERRING,
+    MESSAGE_TYPE_NEW_CLIENT,
+    MESSAGE_TYPE_SHUTDOWN_MESSAGE,
+} MessageType;
+
+enum {
+    UDP_MESSAGE_SIZE          = 512,
+    UDP_MESSAGE_METAINFO_SIZE = 2 * sizeof(ComponentType) + sizeof(MessageType),
+    UDP_MESSAGE_BUFFER_SIZE   = UDP_MESSAGE_SIZE - UDP_MESSAGE_METAINFO_SIZE,
+};
+
+typedef struct UDPMessage {
+    ComponentType sender_type;
+    ComponentType receiver_type;
+    MessageType message_type;
+    union {
+        Pin pin;
+        char bytes[UDP_MESSAGE_BUFFER_SIZE];
+    } message_content;
+} UDPMessage;
+```
+
 ### Сервер парсит входные аргументы, и, если порт указан верно, создаёт и инициализирует ресурсы, создаёт процесс, который будет опрашивать клиентом, и процесс, рассылающий логи, а в основном процессе ждёт новых клиентов.
 
 ```c
